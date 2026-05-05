@@ -1,6 +1,8 @@
 import axios from "axios";
 import { db } from "../lib/firebase.js";
 
+const BOT_NAME = "KBComSci";
+
 export default async function handler(req, res) {
     try {
         if (req.method !== "POST") {
@@ -15,14 +17,28 @@ export default async function handler(req, res) {
 
         for (const event of events) {
 
-            // =========================
-            // FILTER SAFE EVENT
-            // =========================
             if (event.type !== "message") continue;
             if (!event.message || event.message.type !== "text") continue;
 
-            let text = (event.message.text || "")
-                .replace(/@\S+\s?/g, "")   // remove LINE mention
+            // =========================
+            // RAW TEXT
+            // =========================
+            const rawText = (event.message.text || "").trim();
+
+            // =========================
+            // REQUIRE MENTION ONLY
+            // =========================
+            const isMentioned = rawText.includes(BOT_NAME);
+
+            if (!isMentioned) {
+                continue; // ❌ ignore all non-mention messages
+            }
+
+            // =========================
+            // CLEAN TEXT
+            // =========================
+            let text = rawText
+                .replace(/@\S+\s?/g, "")
                 .trim();
 
             const replyToken = event.replyToken;
@@ -83,9 +99,6 @@ export default async function handler(req, res) {
                     return reply(replyToken, "❌ จำนวนนักเรียนต้องเป็นตัวเลข");
                 }
 
-                // =========================
-                // taskNo generator (safe version)
-                // =========================
                 const snap = await db.collection("tasks").get();
                 const taskNo = snap.size + 1;
 
