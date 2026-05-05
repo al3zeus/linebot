@@ -48,7 +48,7 @@ export default async function handler(req, res) {
             // =========================
             if (text === "?") {
                 return reply(replyToken,
-`📌 วิธีใช้
+                    `📌 วิธีใช้
 
 ➕ เพิ่มงาน (7 บรรทัด)
 เพิ่มงาน
@@ -82,7 +82,7 @@ export default async function handler(req, res) {
 
                 if (lines.length < 7) {
                     return reply(replyToken,
-`❌ รูปแบบไม่ถูกต้อง
+                        `❌ รูปแบบไม่ถูกต้อง
 
 ต้องมี 7 บรรทัด:
 วิชา / ครู / เนื้อหา / กำหนดส่ง / วันที่สั่ง / จำนวน`);
@@ -176,7 +176,13 @@ export default async function handler(req, res) {
 
                     msg += `📌 ${t.taskNo}. ${t.subject}\n`;
                     msg += `👨‍🏫 ${t.teacher}\n`;
-                    msg += `📅 ${t.due}\n\n`;
+                    const date = new Date(t.due);
+
+                    const dateText = isNaN(date.getTime())
+                        ? "ไม่ระบุเวลา"
+                        : date.toLocaleString("th-TH");
+
+                    msg += `📅 ${dateText}\n\n`;
                 }
 
                 return reply(replyToken, msg);
