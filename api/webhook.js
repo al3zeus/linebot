@@ -259,7 +259,7 @@ export default async function handler(req, res) {
 // =========================
 async function reply(token, message) {
     await axios.post(
-        "https://api.line.me/v2/bot/reply",
+        "https://api.line.me/v2/message/reply",
         {
             replyToken: token,
             messages: [{ type: "text", text: message }]
