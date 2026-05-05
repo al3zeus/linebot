@@ -18,7 +18,7 @@ export default async function handler(req, res) {
             const userId = event.source.userId;
 
             // =========================
-            // ❓ HELP
+            // HELP
             // =========================
             if (text === "?") {
                 await reply(replyToken,
@@ -33,19 +33,22 @@ export default async function handler(req, res) {
 วันที่สั่ง
 จำนวนนักเรียน
 
+📋 เช็คงาน
+เช็คงาน
+
 📤 ส่งงาน
 ส่งแล้ว <เลขงาน> <เลขที่>
 
-✔ ยืนยันงาน
+✔ ยืนยัน
 จริง <เลขงาน> <เลขที่>
 
-📋 เช็คคนที่ยังไม่ส่ง
+📋 เช็คคน
 เช็คคน <เลขงาน>`);
                 continue;
             }
 
             // =========================
-            // ➕ ADD TASK (PHASE INPUT)
+            // ADD TASK
             // =========================
             if (text === "เพิ่มงาน") {
                 sessions[userId] = { step: 1, data: {} };
@@ -112,7 +115,7 @@ export default async function handler(req, res) {
             }
 
             // =========================
-            // 📤 SUBMIT (INIT VERIFY)
+            // SUBMIT (PENDING VERIFY)
             // =========================
             if (text.startsWith("ส่งแล้ว")) {
                 const [, taskIndex, studentId] = text.split(" ");
@@ -120,30 +123,24 @@ export default async function handler(req, res) {
                 const snap = await db.collection("tasks").get();
                 const doc = snap.docs[parseInt(taskIndex) - 1];
 
-                if (!doc) {
-                    await reply(replyToken, "❌ ไม่พบงาน");
-                    continue;
-                }
+                if (!doc) return reply(replyToken, "❌ ไม่พบงาน");
 
                 const task = doc.data();
 
                 if (!task.verify) task.verify = {};
 
                 if (!task.verify[studentId]) {
-                    task.verify[studentId] = {
-                        voters: [],
-                        verified: false
-                    };
+                    task.verify[studentId] = { voters: [], verified: false };
                 }
 
                 await doc.ref.update({ verify: task.verify });
 
-                await reply(replyToken, "📌 รอเพื่อนยืนยัน (≥5 คน)");
+                await reply(replyToken, "📌 รอการยืนยัน");
                 continue;
             }
 
             // =========================
-            // ✔ VOTE VERIFY
+            // VERIFY VOTE
             // =========================
             if (text.startsWith("จริง")) {
                 const [, taskIndex, studentId] = text.split(" ");
@@ -151,10 +148,7 @@ export default async function handler(req, res) {
                 const snap = await db.collection("tasks").get();
                 const doc = snap.docs[parseInt(taskIndex) - 1];
 
-                if (!doc) {
-                    await reply(replyToken, "❌ ไม่พบงาน");
-                    continue;
-                }
+                if (!doc) return reply(replyToken, "❌ ไม่พบงาน");
 
                 const task = doc.data();
 
@@ -165,12 +159,10 @@ export default async function handler(req, res) {
 
                 const v = task.verify[studentId];
 
-                // กันโหวตซ้ำ
                 if (!v.voters.includes(userId)) {
                     v.voters.push(userId);
                 }
 
-                // ครบ 5 คน = verified
                 if (v.voters.length >= 5) {
                     v.verified = true;
 
@@ -184,12 +176,46 @@ export default async function handler(req, res) {
                     submitted: task.submitted
                 });
 
-                await reply(replyToken, "✔ บันทึกการยืนยันแล้ว");
+                await reply(replyToken, "✔ ยืนยันแล้ว");
                 continue;
             }
 
             // =========================
-            // 📋 CHECK MISSING PEOPLE
+            // 📋 CHECK TASK (UI SECTION)
+            // =========================
+            if (text === "เช็คงาน") {
+                const snap = await db.collection("tasks").get();
+
+                if (snap.empty) {
+                    await reply(replyToken, "📭 ยังไม่มีงาน");
+                    continue;
+                }
+
+                const messages = [];
+
+                snap.forEach((doc, i) => {
+                    messages.push(taskUI(i + 1, doc.data()));
+                });
+
+                await axios.post(
+                    "https://api.line.me/v2/bot/message/reply",
+                    {
+                        replyToken,
+                        messages
+                    },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${process.env.CHANNEL_ACCESS_TOKEN}`,
+                            "Content-Type": "application/json"
+                        }
+                    }
+                );
+
+                continue;
+            }
+
+            // =========================
+            // CHECK PEOPLE
             // =========================
             if (text.startsWith("เช็คคน")) {
                 const [, taskIndex] = text.split(" ");
@@ -197,10 +223,7 @@ export default async function handler(req, res) {
                 const snap = await db.collection("tasks").get();
                 const doc = snap.docs[parseInt(taskIndex) - 1];
 
-                if (!doc) {
-                    await reply(replyToken, "❌ ไม่พบงาน");
-                    continue;
-                }
+                if (!doc) return reply(replyToken, "❌ ไม่พบงาน");
 
                 const task = doc.data();
 
@@ -212,10 +235,11 @@ export default async function handler(req, res) {
                     }
                 }
 
-                await reply(replyToken,
+                await reply(
+                    replyToken,
                     missing.length
                         ? `❌ ยังไม่ส่ง: ${missing.join(", ")}`
-                        : "🎉 ส่งครบทุกคนแล้ว"
+                        : "🎉 ส่งครบแล้ว"
                 );
 
                 continue;
@@ -235,7 +259,7 @@ export default async function handler(req, res) {
 // =========================
 async function reply(token, message) {
     await axios.post(
-        "https://api.line.me/v2/bot/message/reply",
+        "https://api.line.me/v2/bot/reply",
         {
             replyToken: token,
             messages: [{ type: "text", text: message }]
@@ -247,4 +271,147 @@ async function reply(token, message) {
             }
         }
     );
+}
+
+function taskUI(taskIndex, task) {
+    const remaining = (task.studentsTotal || 0) - (task.submitted?.length || 0);
+
+    return {
+        type: "flex",
+        altText: "งาน",
+        contents: {
+            type: "bubble",
+            body: {
+                type: "box",
+                layout: "vertical",
+                contents: [
+                    {
+                        type: "text",
+                        text: task.subject,
+                        weight: "bold",
+                        size: "lg"
+                    },
+                    {
+                        type: "text",
+                        text: task.content,
+                        wrap: true,
+                        size: "sm",
+                        margin: "md"
+                    },
+                    {
+                        type: "text",
+                        text: `👨‍🏫 ${task.teacher}`,
+                        size: "xs",
+                        margin: "md"
+                    },
+                    {
+                        type: "text",
+                        text: `📅 ส่ง: ${task.due}`,
+                        size: "xs"
+                    },
+                    {
+                        type: "text",
+                        text: `❌ ยังไม่ส่ง: ${remaining}`,
+                        size: "xs",
+                        color: "#FF5551",
+                        margin: "md"
+                    }
+                ]
+            },
+            footer: {
+                type: "box",
+                layout: "vertical",
+                spacing: "sm",
+                contents: [
+                    {
+                        type: "button",
+                        style: "primary",
+                        action: {
+                            type: "message",
+                            label: "📤 ส่งงาน",
+                            text: `ส่งแล้ว ${taskIndex} 1`
+                        }
+                    },
+                    {
+                        type: "button",
+                        style: "secondary",
+                        action: {
+                            type: "message",
+                            label: "✔ ยืนยันงาน",
+                            text: `จริง ${taskIndex} 1`
+                        }
+                    },
+                    {
+                        type: "button",
+                        style: "link",
+                        action: {
+                            type: "message",
+                            label: "📋 เช็คคน",
+                            text: `เช็คคน ${taskIndex}`
+                        }
+                    }
+                ]
+            }
+        }
+    };
+}
+
+function verifyUI(taskIndex, studentId) {
+    return {
+        type: "flex",
+        altText: "ยืนยันงาน",
+        contents: {
+            type: "bubble",
+            body: {
+                type: "box",
+                layout: "vertical",
+                contents: [
+                    {
+                        type: "text",
+                        text: `งาน #${taskIndex}`,
+                        weight: "bold",
+                        size: "lg"
+                    },
+                    {
+                        type: "text",
+                        text: `เลขที่ ${studentId}`,
+                        size: "sm",
+                        margin: "md"
+                    },
+                    {
+                        type: "text",
+                        text: "คุณคิดว่าเขาส่งงานจริงไหม?",
+                        wrap: true,
+                        size: "sm",
+                        margin: "md"
+                    }
+                ]
+            },
+            footer: {
+                type: "box",
+                layout: "vertical",
+                spacing: "sm",
+                contents: [
+                    {
+                        type: "button",
+                        style: "primary",
+                        action: {
+                            type: "message",
+                            label: "✔ จริง",
+                            text: `จริง ${taskIndex} ${studentId}`
+                        }
+                    },
+                    {
+                        type: "button",
+                        style: "secondary",
+                        action: {
+                            type: "message",
+                            label: "❌ ไม่จริง",
+                            text: `ไม่จริง ${taskIndex} ${studentId}`
+                        }
+                    }
+                ]
+            }
+        }
+    };
 }
