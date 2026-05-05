@@ -1,7 +1,7 @@
 import axios from "axios";
 import { db } from "../lib/firebase.js";
 
-const sessions = {}; // memory (MVP)
+const sessions = {};
 
 export default async function handler(req, res) {
     try {
@@ -21,15 +21,7 @@ export default async function handler(req, res) {
             const s = sessions[userId];
 
             // =========================
-            // 🟢 MENU
-            // =========================
-            if (["menu", "เริ่ม", "สวัสดี", "hi"].includes(text)) {
-                await sendMenu(replyToken);
-                continue;
-            }
-
-            // =========================
-            // ➕ ADD TASK (STEP FLOW)
+            // ➕ ADD TASK FLOW
             // =========================
             if (text === "เพิ่มงาน") {
                 s.step = 1;
@@ -41,7 +33,7 @@ export default async function handler(req, res) {
             if (s.step === 1) {
                 s.data.subject = text;
                 s.step = 2;
-                await reply(replyToken, "👨‍🏫 ชื่อครู");
+                await reply(replyToken, "👨‍🏫 ครูชื่ออะไร");
                 continue;
             }
 
@@ -55,14 +47,14 @@ export default async function handler(req, res) {
             if (s.step === 3) {
                 s.data.title = text;
                 s.step = 4;
-                await reply(replyToken, "📅 วันเวลาเริ่ม");
+                await reply(replyToken, "📅 วันเริ่ม");
                 continue;
             }
 
             if (s.step === 4) {
                 s.data.start = text;
                 s.step = 5;
-                await reply(replyToken, "📅 วันเวลาส่ง");
+                await reply(replyToken, "📅 วันส่ง");
                 continue;
             }
 
@@ -94,7 +86,7 @@ export default async function handler(req, res) {
             }
 
             // =========================
-            // 📋 CHECK TASK (FLEX UI)
+            // 📋 CHECK TASK (TEXT ONLY)
             // =========================
             if (text === "เช็คงาน") {
                 const snap = await db.collection("tasks").get();
@@ -104,70 +96,19 @@ export default async function handler(req, res) {
                     continue;
                 }
 
-                const bubbles = [];
+                let msg = "📋 รายการงาน\n\n";
 
-                snap.forEach((doc) => {
+                snap.forEach((doc, i) => {
                     const d = doc.data();
                     const remaining = (d.studentsTotal || 0) - (d.submitted?.length || 0);
 
-                    bubbles.push({
-                        type: "bubble",
-                        body: {
-                            type: "box",
-                            layout: "vertical",
-                            contents: [
-                                {
-                                    type: "text",
-                                    text: d.title,
-                                    weight: "bold",
-                                    size: "lg"
-                                },
-                                {
-                                    type: "text",
-                                    text: `📘 วิชา: ${d.subject}`,
-                                    size: "sm",
-                                    color: "#666"
-                                },
-                                {
-                                    type: "text",
-                                    text: `👨‍🏫 ครู: ${d.teacher}`,
-                                    size: "sm",
-                                    color: "#666"
-                                },
-                                {
-                                    type: "text",
-                                    text: `❌ ยังไม่ส่ง: ${remaining}`,
-                                    size: "sm",
-                                    color: "#ff0000"
-                                }
-                            ]
-                        }
-                    });
+                    msg += `${i + 1}. ${d.title}\n`;
+                    msg += `วิชา: ${d.subject}\n`;
+                    msg += `ครู: ${d.teacher}\n`;
+                    msg += `❌ เหลือ: ${remaining} คน\n\n`;
                 });
 
-                await axios.post(
-                    "https://api.line.me/v2/bot/message/reply",
-                    {
-                        replyToken,
-                        messages: [
-                            {
-                                type: "flex",
-                                altText: "รายการงาน",
-                                contents: {
-                                    type: "carousel",
-                                    contents: bubbles
-                                }
-                            }
-                        ]
-                    },
-                    {
-                        headers: {
-                            Authorization: `Bearer ${process.env.CHANNEL_ACCESS_TOKEN}`,
-                            "Content-Type": "application/json"
-                        }
-                    }
-                );
-
+                await reply(replyToken, msg);
                 continue;
             }
 
@@ -198,7 +139,7 @@ export default async function handler(req, res) {
                 continue;
             }
 
-            await sendMenu(replyToken);
+            await reply(replyToken, "พิมพ์ 'เพิ่มงาน' หรือ 'เช็คงาน'");
         }
 
         res.status(200).send("OK");
@@ -209,78 +150,6 @@ export default async function handler(req, res) {
     }
 }
 
-// =========================
-// 🎨 MENU UI
-// =========================
-async function sendMenu(replyToken) {
-    await axios.post(
-        "https://api.line.me/v2/bot/message/reply",
-        {
-            replyToken,
-            messages: [
-                {
-                    type: "flex",
-                    altText: "เมนู",
-                    contents: {
-                        type: "bubble",
-                        body: {
-                            type: "box",
-                            layout: "vertical",
-                            contents: [
-                                {
-                                    type: "text",
-                                    text: "📌 เมนูหลัก",
-                                    weight: "bold",
-                                    size: "xl"
-                                }
-                            ]
-                        },
-                        footer: {
-                            type: "box",
-                            layout: "vertical",
-                            contents: [
-                                {
-                                    type: "button",
-                                    style: "primary",
-                                    action: {
-                                        type: "message",
-                                        label: "➕ เพิ่มงาน",
-                                        text: "เพิ่มงาน"
-                                    }
-                                },
-                                {
-                                    type: "button",
-                                    action: {
-                                        type: "message",
-                                        label: "📋 เช็คงาน",
-                                        text: "เช็คงาน"
-                                    }
-                                },
-                                {
-                                    type: "button",
-                                    action: {
-                                        type: "message",
-                                        label: "✅ ส่งงาน",
-                                        text: "ส่งแล้ว 1 12"
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            ]
-        },
-        {
-            headers: {
-                Authorization: `Bearer ${process.env.CHANNEL_ACCESS_TOKEN}`,
-                "Content-Type": "application/json"
-            }
-        }
-    );
-}
-
-// =========================
-// 💬 TEXT REPLY
 // =========================
 async function reply(token, message) {
     await axios.post(
