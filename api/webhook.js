@@ -1,19 +1,13 @@
 import axios from "axios";
 import { db } from "../lib/firebase.js";
 
-// memory session (MVP)
-const sessions = {};
+const sessions = {}; // memory (MVP)
 
 export default async function handler(req, res) {
     try {
-        if (req.method !== "POST") {
-            return res.status(405).send("Method Not Allowed");
-        }
+        if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
-        const body = typeof req.body === "string"
-            ? JSON.parse(req.body)
-            : req.body;
-
+        const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
         const events = body.events || [];
 
         for (const event of events) {
@@ -24,24 +18,23 @@ export default async function handler(req, res) {
             const userId = event.source.userId;
 
             if (!sessions[userId]) sessions[userId] = {};
-
             const s = sessions[userId];
 
             // =========================
-            // 🟢 MENU (UI)
+            // 🟢 MENU
             // =========================
-            if (["menu", "เริ่ม", "สวัสดี"].includes(text)) {
+            if (["menu", "เริ่ม", "สวัสดี", "hi"].includes(text)) {
                 await sendMenu(replyToken);
                 continue;
             }
 
             // =========================
-            // ➕ ADD TASK FLOW (FULL)
+            // ➕ ADD TASK (STEP FLOW)
             // =========================
             if (text === "เพิ่มงาน") {
                 s.step = 1;
                 s.data = {};
-                await reply(replyToken, "📘 ใส่วิชา");
+                await reply(replyToken, "📘 วิชาอะไร");
                 continue;
             }
 
@@ -113,7 +106,7 @@ export default async function handler(req, res) {
 
                 const bubbles = [];
 
-                snap.forEach((doc, i) => {
+                snap.forEach((doc) => {
                     const d = doc.data();
                     const remaining = (d.studentsTotal || 0) - (d.submitted?.length || 0);
 
@@ -125,19 +118,19 @@ export default async function handler(req, res) {
                             contents: [
                                 {
                                     type: "text",
-                                    text: `${d.title}`,
+                                    text: d.title,
                                     weight: "bold",
                                     size: "lg"
                                 },
                                 {
                                     type: "text",
-                                    text: `วิชา: ${d.subject}`,
+                                    text: `📘 วิชา: ${d.subject}`,
                                     size: "sm",
                                     color: "#666"
                                 },
                                 {
                                     type: "text",
-                                    text: `ครู: ${d.teacher}`,
+                                    text: `👨‍🏫 ครู: ${d.teacher}`,
                                     size: "sm",
                                     color: "#666"
                                 },
@@ -179,7 +172,7 @@ export default async function handler(req, res) {
             }
 
             // =========================
-            // ✅ SEND TASK
+            // ✅ SUBMIT TASK
             // =========================
             if (text.startsWith("ส่งแล้ว")) {
                 const parts = text.split(" ");
@@ -216,6 +209,9 @@ export default async function handler(req, res) {
     }
 }
 
+// =========================
+// 🎨 MENU UI
+// =========================
 async function sendMenu(replyToken) {
     await axios.post(
         "https://api.line.me/v2/bot/message/reply",
@@ -224,7 +220,7 @@ async function sendMenu(replyToken) {
             messages: [
                 {
                     type: "flex",
-                    altText: "เมนูหลัก",
+                    altText: "เมนู",
                     contents: {
                         type: "bubble",
                         body: {
@@ -233,7 +229,7 @@ async function sendMenu(replyToken) {
                             contents: [
                                 {
                                     type: "text",
-                                    text: "📌 เมนู",
+                                    text: "📌 เมนูหลัก",
                                     weight: "bold",
                                     size: "xl"
                                 }
@@ -283,6 +279,9 @@ async function sendMenu(replyToken) {
     );
 }
 
+// =========================
+// 💬 TEXT REPLY
+// =========================
 async function reply(token, message) {
     await axios.post(
         "https://api.line.me/v2/bot/message/reply",
