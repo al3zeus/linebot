@@ -3,78 +3,74 @@ import { db } from "../lib/firebase.js";
 
 export default async function handler(req, res) {
     try {
-        console.log("🔥 CRON HIT");
+        console.log("🔥 CRON HIT SAFE MODE");
 
-        // =========================
-        // 1. GET ALL TASKS
-        // =========================
-        const snap = await db.collection("tasks").get();
+        const tasksSnap = await db.collection("tasks").get();
+        const groupsSnap = await db.collection("groups").get();
 
-        console.log("📦 TASKS:", snap.size);
-
-        // =========================
-        // 2. LOOP TASKS
-        // =========================
-        for (const doc of snap.docs) {
-            const task = doc.data();
-
-            console.log("📌 TASK:", task.title);
-
+        for (const taskDoc of tasksSnap.docs) {
+            const task = taskDoc.data();
             const reminders = task.reminders || [];
-            let changed = false;
 
-            // =========================
-            // 3. CHECK REMINDERS
-            // =========================
-            for (let r of reminders) {
+            for (const r of reminders) {
                 const now = new Date();
                 const remindTime = new Date(r.time);
 
-                console.log("⏰ CHECK:", r.type, r.sent);
+                if (remindTime > now) continue;
 
-                if (!r.sent && remindTime <= now) {
+                const logKey = r.key;
 
-                    console.log("🚀 SEND:", task.title, r.type);
+                // =========================
+                // 🛡️ CHECK LOG (ANTI-SPAM CORE)
+                // =========================
+                const logRef = db.collection("reminder_logs").doc(logKey);
+                const logSnap = await logRef.get();
+
+                if (logSnap.exists) {
+                    console.log("⛔ SKIP (already sent):", logKey);
+                    continue;
+                }
+
+                console.log("🚀 SEND:", task.subject, r.type);
+
+                // =========================
+                // SEND TO ALL GROUPS
+                // =========================
+                for (const g of groupsSnap.docs) {
+                    const groupId = g.data().groupId;
 
                     await sendLineMessage(
-                        `📌 งาน: ${task.title}\n⏰ เตือน: ${r.type}`
+                        groupId,
+                        `📌 งาน: ${task.subject}\n📝 ${task.content}\n⏰ เตือน: ${r.type}`
                     );
-
-                    r.sent = true;
-                    changed = true;
                 }
-            }
 
-            // =========================
-            // 4. UPDATE FIRESTORE
-            // =========================
-            if (changed) {
-                await doc.ref.update({ reminders });
+                // =========================
+                // MARK AS SENT (GLOBAL LOCK)
+                // =========================
+                await logRef.set({
+                    taskId: taskDoc.id,
+                    type: r.type,
+                    sentAt: new Date()
+                });
             }
         }
 
-        return res.status(200).send("OK");
+        res.status(200).send("OK");
 
     } catch (err) {
         console.error("❌ CRON ERROR:", err);
-        return res.status(500).send(err.message);
+        res.status(500).send(err.message);
     }
 }
 
 // =========================
-// LINE PUSH FUNCTION
-// =========================
-async function sendLineMessage(text) {
+async function sendLineMessage(to, text) {
     return axios.post(
         "https://api.line.me/v2/bot/message/push",
         {
-            to: process.env.LINE_USER_ID, // เปลี่ยนเป็น userId จริงหรือ loop users ทีหลัง
-            messages: [
-                {
-                    type: "text",
-                    text
-                }
-            ]
+            to,
+            messages: [{ type: "text", text }]
         },
         {
             headers: {
