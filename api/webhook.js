@@ -6,9 +6,10 @@ export default async function handler(req, res) {
         return res.status(405).send("Method Not Allowed");
     }
 
-    const body = typeof req.body === "string"
-        ? JSON.parse(req.body)
-        : req.body || {};
+    const body =
+        typeof req.body === "string"
+            ? JSON.parse(req.body)
+            : req.body || {};
 
     const events = body.events || [];
 
@@ -21,22 +22,53 @@ export default async function handler(req, res) {
         const userId = event.source?.userId;
 
         // =========================
-        // 1) เพิ่มงาน
+        // ❓ HELP COMMAND
+        // =========================
+        if (text === "?" || text === "help") {
+            return reply(replyToken,
+`📌 วิธีใช้บอท
+
+➕ เพิ่มงาน
+เพิ่มงาน
+วิชา
+ครู
+ชื่องาน
+วันเวลาเริ่ม
+วันเวลาส่ง
+
+📋 ดูงาน
+เช็คงาน
+
+✅ ส่งงาน
+ส่งแล้ว <เลขงาน> <เลขที่นักเรียน>`
+            );
+        }
+
+        // =========================
+        // ➕ เพิ่มงาน (ใช้ newline)
         // =========================
         if (text.startsWith("เพิ่มงาน")) {
-            const parts = text.split(" ");
+            const parts = text.split("\n").map(s => s.trim());
 
-            if (parts.length < 8) {
+            if (parts.length < 6) {
                 return reply(replyToken,
-                    "รูปแบบไม่ถูกต้อง\nเพิ่มงาน วิชา ครู ชื่องาน วันสั่ง เวลา วันส่ง"
+`❌ รูปแบบไม่ถูกต้อง
+
+ใช้:
+เพิ่มงาน
+วิชา
+ครู
+ชื่องาน
+วันสั่ง เวลา
+วันส่ง`
                 );
             }
 
             const subject = parts[1];
             const teacher = parts[2];
             const title = parts[3];
-            const assignDate = parts[4] + " " + parts[5];
-            const dueDate = parts[6] + " " + parts[7];
+            const assignDate = parts[4];
+            const dueDate = parts[5];
 
             await db.collection("tasks").add({
                 subject,
@@ -53,7 +85,7 @@ export default async function handler(req, res) {
         }
 
         // =========================
-        // 2) เช็คงาน
+        // 📋 เช็คงาน
         // =========================
         if (text === "เช็คงาน") {
             const snap = await db.collection("tasks").get();
@@ -63,26 +95,26 @@ export default async function handler(req, res) {
             }
 
             let msg = "📋 รายการงาน\n\n";
+            let i = 1;
 
-            let index = 1;
             snap.forEach(doc => {
                 const d = doc.data();
+                const status = d.submitted.length === 0
+                    ? "❌ ยังไม่มีคนส่ง"
+                    : `✔ ส่งแล้ว ${d.submitted.length}`;
 
-                const remaining = 0; // ยังไม่มี list คนทั้งหมด → คิดภายหลัง
-                const status = d.submitted.length === 0 ? "❌ ยังไม่มีคนส่ง" : `✔ ส่งแล้ว ${d.submitted.length}`;
-
-                msg += `${index}. ${d.title}\n`;
+                msg += `${i}. ${d.title}\n`;
                 msg += `วิชา: ${d.subject}\n`;
                 msg += `${status}\n\n`;
 
-                index++;
+                i++;
             });
 
             return reply(replyToken, msg);
         }
 
         // =========================
-        // 3) ส่งงาน
+        // ✅ ส่งงาน
         // =========================
         if (text.startsWith("ส่งแล้ว")) {
             const parts = text.split(" ");
@@ -93,12 +125,12 @@ export default async function handler(req, res) {
             const docs = snap.docs;
 
             if (taskNumber < 1 || taskNumber > docs.length) {
-                return reply(replyToken, "ไม่พบเลขงานนี้");
+                return reply(replyToken, "ไม่พบงานนี้");
             }
 
-            const taskRef = docs[taskNumber - 1].ref;
+            const ref = docs[taskNumber - 1].ref;
 
-            await taskRef.update({
+            await ref.update({
                 submitted: admin.firestore.FieldValue.arrayUnion(studentId)
             });
 
