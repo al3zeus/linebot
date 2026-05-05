@@ -3,15 +3,28 @@ import { db } from "../lib/firebase.js";
 
 export default async function handler(req, res) {
     try {
-        if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
+        if (req.method !== "POST") {
+            return res.status(405).send("Method Not Allowed");
+        }
 
-        const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+        const body = typeof req.body === "string"
+            ? JSON.parse(req.body)
+            : req.body;
+
         const events = body.events || [];
 
         for (const event of events) {
-            if (event.type !== "message") continue;
 
-            const text = (event.message.text || "").trim();
+            // =========================
+            // FILTER SAFE EVENT
+            // =========================
+            if (event.type !== "message") continue;
+            if (!event.message || event.message.type !== "text") continue;
+
+            let text = (event.message.text || "")
+                .replace(/@\S+\s?/g, "")   // remove LINE mention
+                .trim();
+
             const replyToken = event.replyToken;
 
             // =========================
@@ -41,7 +54,7 @@ export default async function handler(req, res) {
             }
 
             // =========================
-            // ADD TASK (TASKNO SYSTEM)
+            // ADD TASK
             // =========================
             if (text.startsWith("เพิ่มงาน")) {
 
@@ -70,17 +83,19 @@ export default async function handler(req, res) {
                     return reply(replyToken, "❌ จำนวนนักเรียนต้องเป็นตัวเลข");
                 }
 
-                // 👉 สร้าง taskNo (สำคัญ)
+                // =========================
+                // taskNo generator (safe version)
+                // =========================
                 const snap = await db.collection("tasks").get();
                 const taskNo = snap.size + 1;
 
                 await db.collection("tasks").add({
                     taskNo,
-                    subject: subject || "-",
-                    teacher: teacher || "-",
-                    content: content || "-",
-                    due: due || "-",
-                    start: start || "-",
+                    subject,
+                    teacher,
+                    content,
+                    due,
+                    start,
                     studentsTotal: total,
                     submitted: [],
                     createdAt: new Date()
@@ -91,21 +106,23 @@ export default async function handler(req, res) {
             }
 
             // =========================
-            // SUBMIT TASK (NO NaN)
+            // SUBMIT TASK
             // =========================
             if (text.startsWith("ส่งแล้ว")) {
 
-                const parts = text.trim().split(/\s+/);
+                const parts = text.split(/\s+/);
 
                 const taskNo = Number(parts[1]);
                 const studentId = Number(parts[2]);
 
                 if (!Number.isInteger(taskNo) || !Number.isInteger(studentId)) {
-                    return reply(replyToken, "❌ ใช้: ส่งแล้ว <เลขงาน> <เลขที่>");
+                    return reply(replyToken,
+                        "❌ ใช้: ส่งแล้ว <เลขงาน> <เลขที่>");
                 }
 
                 const snap = await db.collection("tasks")
                     .where("taskNo", "==", taskNo)
+                    .limit(1)
                     .get();
 
                 if (snap.empty) {
@@ -115,9 +132,7 @@ export default async function handler(req, res) {
                 const doc = snap.docs[0];
                 const task = doc.data();
 
-                const submitted = Array.isArray(task.submitted)
-                    ? task.submitted
-                    : [];
+                const submitted = task.submitted || [];
 
                 if (!submitted.includes(studentId)) {
                     submitted.push(studentId);
@@ -146,9 +161,9 @@ export default async function handler(req, res) {
                 for (const doc of snap.docs) {
                     const t = doc.data();
 
-                    msg += `📌 ${t.taskNo}. ${t.subject || "-"}\n`;
-                    msg += `👨‍🏫 ${t.teacher || "-"}\n`;
-                    msg += `📅 ${t.due || "-"}\n\n`;
+                    msg += `📌 ${t.taskNo}. ${t.subject}\n`;
+                    msg += `👨‍🏫 ${t.teacher}\n`;
+                    msg += `📅 ${t.due}\n\n`;
                 }
 
                 return reply(replyToken, msg);
@@ -162,8 +177,13 @@ export default async function handler(req, res) {
                 const parts = text.split(/\s+/);
                 const taskNo = Number(parts[1]);
 
+                if (!Number.isInteger(taskNo)) {
+                    return reply(replyToken, "❌ ใช้: เช็คคน <เลขงาน>");
+                }
+
                 const snap = await db.collection("tasks")
                     .where("taskNo", "==", taskNo)
+                    .limit(1)
                     .get();
 
                 if (snap.empty) {
@@ -174,14 +194,13 @@ export default async function handler(req, res) {
 
                 const missing = [];
 
-                for (let i = 1; i <= task.studentsTotal; i++) {
+                for (let i = 1; i <= (task.studentsTotal || 0); i++) {
                     if (!task.submitted.includes(i)) {
                         missing.push(i);
                     }
                 }
 
-                return reply(
-                    replyToken,
+                return reply(replyToken,
                     missing.length
                         ? `❌ ยังไม่ส่ง: ${missing.join(", ")}`
                         : "🎉 ส่งครบแล้ว"
