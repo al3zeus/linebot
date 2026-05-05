@@ -15,51 +15,46 @@ export default async function handler(req, res) {
 
             const text = (event.message.text || "").trim();
             const replyToken = event.replyToken;
-            const userId = event.source.userId;
 
             // =========================
             // HELP
             // =========================
             if (text === "?") {
                 return reply(replyToken,
-                    `📌 วิธีใช้
+`📌 วิธีใช้
 
 ➕ เพิ่มงาน (วางทีเดียว 7 บรรทัด)
 
-เพิ่มงาน
-<วิชา>
-<ผู้สอน>
-<เนื้อหางาน>
-<กำหนดส่ง>
-<วันที่สั่ง>
-<จำนวนสมาชิก>
-
-📋 เช็คงาน
-เช็คงาน
-
-✅ ส่งงาน
-ส่งแล้ว <เลขงาน> <เลขที่>`);
-            }
-
-            // =========================
-            // ADD TASK (SESSION)
-            // =========================
-            if (text.startsWith("เพิ่มงาน")) {
-                const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-
-                // lines[0] = "เพิ่มงาน"
-                if (lines.length < 7) {
-                    return reply(replyToken,
-                        `❌ รูปแบบไม่ถูกต้อง
-
-📌 ใช้แบบนี้:
 เพิ่มงาน
 วิชา
 ครู
 เนื้อหา
 กำหนดส่ง
 วันที่สั่ง
-จำนวนนักเรียน`);
+จำนวนนักเรียน
+
+📋 เช็คงาน
+เช็คงาน
+
+📤 ส่งงาน
+ส่งแล้ว <เลขงาน> <เลขที่>
+
+📋 เช็คคน
+เช็คคน <เลขงาน>`);
+            }
+
+            // =========================
+            // ADD TASK
+            // =========================
+            if (text.startsWith("เพิ่มงาน")) {
+                const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+
+                if (lines.length < 7) {
+                    return reply(replyToken,
+`❌ รูปแบบไม่ถูกต้อง
+
+ต้องมี 7 บรรทัด:
+วิชา / ครู / เนื้อหา / กำหนดส่ง / วันที่สั่ง / จำนวน`);
                 }
 
                 const subject = lines[1];
@@ -67,9 +62,9 @@ export default async function handler(req, res) {
                 const content = lines[3];
                 const due = lines[4];
                 const start = lines[5];
-                const total = parseInt(lines[6]);
+                const total = Number(lines[6]);
 
-                if (Number.isNaN(total)) {
+                if (!Number.isInteger(total)) {
                     return reply(replyToken, "❌ จำนวนนักเรียนต้องเป็นตัวเลข");
                 }
 
@@ -84,34 +79,35 @@ export default async function handler(req, res) {
                     createdAt: new Date()
                 });
 
-                return reply(
-                    replyToken,
-                    `✅ เพิ่มงานสำเร็จ\n📌 taskId: ${docRef.id}`
-                );
+                return reply(replyToken,
+                    `✅ เพิ่มงานสำเร็จ\n📌 เลขงาน: ${docRef.id}`);
             }
 
             // =========================
-            // SUBMIT TASK
+            // SUBMIT TASK (FIXED NA N)
             // =========================
             if (text.startsWith("ส่งแล้ว")) {
-                const parts = text.split(/\s+/);
 
-                const taskIndex = parseInt(parts[1]); // ลำดับงาน
-                const studentId = parseInt(parts[2]);
+                const parts = text.trim().split(/\s+/);
 
-                if (!taskIndex || !studentId) {
+                const taskIndex = Number(parts[1]);
+                const studentId = Number(parts[2]);
+
+                if (!Number.isInteger(taskIndex) || !Number.isInteger(studentId)) {
                     return reply(replyToken, "❌ ใช้: ส่งแล้ว <เลขงาน> <เลขที่>");
                 }
 
-                const snap = await db.collection("tasks").get();
+                const snap = await db.collection("tasks")
+                    .orderBy("createdAt", "asc")
+                    .get();
+
                 const docs = snap.docs;
 
-                const doc = docs[taskIndex - 1];
-
-                if (!doc) {
-                    return reply(replyToken, "❌ ไม่พบงาน");
+                if (taskIndex < 1 || taskIndex > docs.length) {
+                    return reply(replyToken, "❌ ไม่พบงานลำดับนี้");
                 }
 
+                const doc = docs[taskIndex - 1];
                 const task = doc.data();
 
                 if (!task.submitted) task.submitted = [];
@@ -131,7 +127,10 @@ export default async function handler(req, res) {
             // CHECK TASK
             // =========================
             if (text === "เช็คงาน") {
-                const snap = await db.collection("tasks").get();
+
+                const snap = await db.collection("tasks")
+                    .orderBy("createdAt", "asc")
+                    .get();
 
                 if (snap.empty) {
                     return reply(replyToken, "📭 ยังไม่มีงาน");
@@ -151,20 +150,24 @@ export default async function handler(req, res) {
             }
 
             // =========================
-            // CHECK PEOPLE NOT SUBMIT
+            // CHECK PEOPLE
             // =========================
             if (text.startsWith("เช็คคน")) {
+
                 const parts = text.split(/\s+/);
-                const taskIndex = parseInt(parts[1]);
+                const taskIndex = Number(parts[1]);
 
-                const snap = await db.collection("tasks").get();
-                const doc = snap.docs[taskIndex - 1];
+                const snap = await db.collection("tasks")
+                    .orderBy("createdAt", "asc")
+                    .get();
 
-                if (!doc) {
+                const docs = snap.docs;
+
+                if (!Number.isInteger(taskIndex) || taskIndex < 1 || taskIndex > docs.length) {
                     return reply(replyToken, "❌ ไม่พบงาน");
                 }
 
-                const task = doc.data();
+                const task = docs[taskIndex - 1].data();
 
                 const missing = [];
 
