@@ -1,92 +1,91 @@
 import axios from "axios";
 import { db } from "../lib/firebase.js";
 
-const sessions = {};
-
 export default async function handler(req, res) {
     try {
-        if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
-
         const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
         const events = body.events || [];
 
         for (const event of events) {
             if (event.type !== "message") continue;
 
-            const text = event.message.text;
+            const text = event.message.text.trim();
             const replyToken = event.replyToken;
-            const userId = event.source.userId;
-
-            if (!sessions[userId]) sessions[userId] = {};
-            const s = sessions[userId];
 
             // =========================
-            // ➕ ADD TASK FLOW
+            // ❓ HELP
             // =========================
-            if (text === "เพิ่มงาน") {
-                s.step = 1;
-                s.data = {};
-                await reply(replyToken, "📘 วิชาอะไร");
+            if (text === "?") {
+                await reply(replyToken,
+`📌 วิธีใช้
+
+➕ เพิ่มงาน (วางทีเดียว 7 บรรทัด)
+
+เพิ่มงาน
+<วิชา>
+<ผู้สอน>
+<เนื้อหางาน>
+<กำหนดส่ง>
+<วันที่สั่ง>
+<จำนวนสมาชิก>
+
+📋 เช็คงาน
+เช็คงาน
+
+✅ ส่งงาน
+ส่งแล้ว <เลขงาน> <เลขที่>`);
                 continue;
             }
 
-            if (s.step === 1) {
-                s.data.subject = text;
-                s.step = 2;
-                await reply(replyToken, "👨‍🏫 ครูชื่ออะไร");
-                continue;
-            }
+            // =========================
+            // ➕ ADD TASK (PHASE INPUT)
+            // =========================
+            if (text.startsWith("เพิ่มงาน")) {
+                const lines = text.split("\n").map(l => l.trim());
 
-            if (s.step === 2) {
-                s.data.teacher = text;
-                s.step = 3;
-                await reply(replyToken, "📝 ชื่องาน");
-                continue;
-            }
+                // ต้องมีอย่างน้อย 7 บรรทัด
+                if (lines.length < 7) {
+                    await reply(replyToken,
+`❌ รูปแบบไม่ถูกต้อง
 
-            if (s.step === 3) {
-                s.data.title = text;
-                s.step = 4;
-                await reply(replyToken, "📅 วันเริ่ม");
-                continue;
-            }
+📌 ต้องใส่แบบนี้:
 
-            if (s.step === 4) {
-                s.data.start = text;
-                s.step = 5;
-                await reply(replyToken, "📅 วันส่ง");
-                continue;
-            }
+เพิ่มงาน
+วิชา
+ผู้สอน
+เนื้อหางาน
+กำหนดส่ง
+วันที่สั่ง
+จำนวนสมาชิก
 
-            if (s.step === 5) {
-                s.data.due = text;
-                s.step = 6;
-                await reply(replyToken, "👥 จำนวนนักเรียน");
-                continue;
-            }
+พิมพ์ ? เพื่อดูวิธีใช้`);
+                    continue;
+                }
 
-            if (s.step === 6) {
-                s.data.total = parseInt(text);
+                const [, subject, teacher, content, due, start, total] = lines;
+
+                if (!subject || !teacher || !content || !due || !start || !total) {
+                    await reply(replyToken, "❌ ข้อมูลไม่ครบ พิมพ์ ? เพื่อดูรูปแบบ");
+                    continue;
+                }
 
                 await db.collection("tasks").add({
-                    subject: s.data.subject,
-                    teacher: s.data.teacher,
-                    title: s.data.title,
-                    start: s.data.start,
-                    due: s.data.due,
-                    studentsTotal: s.data.total,
+                    subject,
+                    teacher,
+                    content,
+                    due,
+                    start,
+                    studentsTotal: parseInt(total),
                     submitted: [],
                     createdAt: new Date()
                 });
-
-                delete sessions[userId];
 
                 await reply(replyToken, "✅ เพิ่มงานเรียบร้อย");
                 continue;
             }
 
             // =========================
-            // 📋 CHECK TASK (TEXT ONLY)
+            // 📋 CHECK TASK
             // =========================
             if (text === "เช็คงาน") {
                 const snap = await db.collection("tasks").get();
@@ -102,10 +101,11 @@ export default async function handler(req, res) {
                     const d = doc.data();
                     const remaining = (d.studentsTotal || 0) - (d.submitted?.length || 0);
 
-                    msg += `${i + 1}. ${d.title}\n`;
-                    msg += `วิชา: ${d.subject}\n`;
-                    msg += `ครู: ${d.teacher}\n`;
-                    msg += `❌ เหลือ: ${remaining} คน\n\n`;
+                    msg += `${i + 1}. ${d.subject}\n`;
+                    msg += `👨‍🏫 ${d.teacher}\n`;
+                    msg += `📝 ${d.content}\n`;
+                    msg += `📅 ส่ง: ${d.due}\n`;
+                    msg += `❌ เหลือ: ${remaining}\n\n`;
                 });
 
                 await reply(replyToken, msg);
@@ -139,7 +139,7 @@ export default async function handler(req, res) {
                 continue;
             }
 
-            await reply(replyToken, "พิมพ์ 'เพิ่มงาน' หรือ 'เช็คงาน'");
+            await reply(replyToken, "พิมพ์ ? เพื่อดูวิธีใช้");
         }
 
         res.status(200).send("OK");
