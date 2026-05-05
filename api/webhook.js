@@ -22,7 +22,7 @@ export default async function handler(req, res) {
             // =========================
             if (text === "?") {
                 return reply(replyToken,
-`📌 วิธีใช้
+                    `📌 วิธีใช้
 
 ➕ เพิ่มงาน (วางทีเดียว 7 บรรทัด)
 
@@ -106,31 +106,35 @@ export default async function handler(req, res) {
             if (text.startsWith("ส่งแล้ว")) {
                 const parts = text.split(/\s+/);
 
-                const taskId = parts[1];
+                const taskIndex = parseInt(parts[1]); // ลำดับงาน
                 const studentId = parseInt(parts[2]);
 
-                if (!taskId || !studentId) {
-                    return reply(replyToken, "❌ ใช้: ส่งแล้ว <taskId> <เลขที่>");
+                if (!taskIndex || !studentId) {
+                    return reply(replyToken, "❌ ใช้: ส่งแล้ว <เลขงาน> <เลขที่>");
                 }
 
-                const docRef = db.collection("tasks").doc(taskId);
-                const doc = await docRef.get();
+                const snap = await db.collection("tasks").get();
+                const docs = snap.docs;
 
-                if (!doc.exists) {
+                const doc = docs[taskIndex - 1];
+
+                if (!doc) {
                     return reply(replyToken, "❌ ไม่พบงาน");
                 }
 
-                const data = doc.data();
+                const task = doc.data();
 
-                if (!data.submitted.includes(studentId)) {
-                    data.submitted.push(studentId);
+                if (!task.submitted) task.submitted = [];
+
+                if (!task.submitted.includes(studentId)) {
+                    task.submitted.push(studentId);
                 }
 
-                await docRef.update({
-                    submitted: data.submitted
+                await doc.ref.update({
+                    submitted: task.submitted
                 });
 
-                return reply(replyToken, "📌 ส่งงานแล้ว (รอครูตรวจ)");
+                return reply(replyToken, "📌 ส่งงานแล้ว");
             }
 
             // =========================
@@ -145,16 +149,12 @@ export default async function handler(req, res) {
 
                 let msg = "📋 งานทั้งหมด\n\n";
 
-                let index = 1;
-
-                snap.forEach(doc => {
+                snap.forEach((doc, i) => {
                     const t = doc.data();
 
-                    msg += `📌 ${index}. ${t.subject}\n`;
+                    msg += `📌 ${i + 1}. ${t.subject}\n`;
                     msg += `👨‍🏫 ${t.teacher}\n`;
                     msg += `📅 ${t.due}\n\n`;
-
-                    index++;
                 });
 
                 return reply(replyToken, msg);
@@ -165,11 +165,12 @@ export default async function handler(req, res) {
             // =========================
             if (text.startsWith("เช็คคน")) {
                 const parts = text.split(/\s+/);
-                const taskId = parts[1];
+                const taskIndex = parseInt(parts[1]);
 
-                const doc = await db.collection("tasks").doc(taskId).get();
+                const snap = await db.collection("tasks").get();
+                const doc = snap.docs[taskIndex - 1];
 
-                if (!doc.exists) {
+                if (!doc) {
                     return reply(replyToken, "❌ ไม่พบงาน");
                 }
 
