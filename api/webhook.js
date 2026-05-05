@@ -3,15 +3,55 @@ import { db } from "../lib/firebase.js";
 
 const BOT_NAME = "KBComSci";
 
+/* =========================
+   DATE PARSER (FIXED)
+========================= */
+function parseFlexibleDate(input) {
+    if (!input) return null;
+
+    let date;
+
+    // dd/mm/yyyy [hh:mm]
+    const m = input.match(
+        /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?$/
+    );
+
+    if (m) {
+        let [, d, mo, y, h = 0, min = 0] = m;
+
+        d = Number(d);
+        mo = Number(mo) - 1;
+        y = Number(y);
+
+        // พ.ศ.
+        if (y > 3000) y -= 543;
+
+        return new Date(y, mo, d, h, min);
+    }
+
+    date = new Date(input);
+
+    if (isNaN(date.getTime())) return null;
+
+    const year = date.getFullYear();
+
+    if (year > 3000) {
+        date.setFullYear(year - 543);
+    }
+
+    return date;
+}
+
 export default async function handler(req, res) {
     try {
         if (req.method !== "POST") {
             return res.status(405).send("Method Not Allowed");
         }
 
-        const body = typeof req.body === "string"
-            ? JSON.parse(req.body)
-            : req.body;
+        const body =
+            typeof req.body === "string"
+                ? JSON.parse(req.body)
+                : req.body;
 
         const events = body.events || [];
 
@@ -20,35 +60,24 @@ export default async function handler(req, res) {
             if (event.type !== "message") continue;
             if (!event.message || event.message.type !== "text") continue;
 
-            // =========================
-            // RAW TEXT
-            // =========================
             const rawText = (event.message.text || "").trim();
 
-            // =========================
-            // REQUIRE MENTION ONLY
-            // =========================
+            // ต้องมีแท็ก bot
             const isMentioned = rawText.includes(BOT_NAME);
+            if (!isMentioned) continue;
 
-            if (!isMentioned) {
-                continue; // ❌ ignore all non-mention messages
-            }
-
-            // =========================
-            // CLEAN TEXT
-            // =========================
             let text = rawText
                 .replace(/@\S+\s?/g, "")
                 .trim();
 
             const replyToken = event.replyToken;
 
-            // =========================
-            // HELP
-            // =========================
+            /* =========================
+               HELP
+            ========================= */
             if (text === "?") {
                 return reply(replyToken,
-                    `📌 วิธีใช้
+`📌 วิธีใช้
 
 ➕ เพิ่มงาน (7 บรรทัด)
 เพิ่มงาน
@@ -69,9 +98,9 @@ export default async function handler(req, res) {
 เช็คคน <เลขงาน>`);
             }
 
-            // =========================
-            // ADD TASK
-            // =========================
+            /* =========================
+               ADD TASK
+            ========================= */
             if (text.startsWith("เพิ่มงาน")) {
 
                 const lines = text
@@ -82,7 +111,7 @@ export default async function handler(req, res) {
 
                 if (lines.length < 7) {
                     return reply(replyToken,
-                        `❌ รูปแบบไม่ถูกต้อง
+`❌ รูปแบบไม่ถูกต้อง
 
 ต้องมี 7 บรรทัด:
 วิชา / ครู / เนื้อหา / กำหนดส่ง / วันที่สั่ง / จำนวน`);
@@ -91,9 +120,14 @@ export default async function handler(req, res) {
                 const subject = lines[1];
                 const teacher = lines[2];
                 const content = lines[3];
-                const due = new Date(lines[4]).getTime();
+
+                const dueDate = parseFlexibleDate(lines[4]);
                 const start = lines[5];
                 const total = Number(lines[6]);
+
+                if (!dueDate) {
+                    return reply(replyToken, "❌ วันที่ไม่ถูกต้อง");
+                }
 
                 if (!Number.isFinite(total)) {
                     return reply(replyToken, "❌ จำนวนนักเรียนต้องเป็นตัวเลข");
@@ -107,7 +141,7 @@ export default async function handler(req, res) {
                     subject,
                     teacher,
                     content,
-                    due,
+                    due: dueDate.getTime(),
                     start,
                     studentsTotal: total,
                     submitted: [],
@@ -118,9 +152,9 @@ export default async function handler(req, res) {
                     `✅ เพิ่มงานสำเร็จ\n📌 เลขงาน: ${taskNo}`);
             }
 
-            // =========================
-            // SUBMIT TASK
-            // =========================
+            /* =========================
+               SUBMIT TASK
+            ========================= */
             if (text.startsWith("ส่งแล้ว")) {
 
                 const parts = text.split(/\s+/);
@@ -156,9 +190,9 @@ export default async function handler(req, res) {
                 return reply(replyToken, "📌 ส่งงานแล้ว");
             }
 
-            // =========================
-            // CHECK TASK
-            // =========================
+            /* =========================
+               CHECK TASK
+            ========================= */
             if (text === "เช็คงาน") {
 
                 const snap = await db.collection("tasks")
@@ -174,23 +208,26 @@ export default async function handler(req, res) {
                 for (const doc of snap.docs) {
                     const t = doc.data();
 
+                    const date = parseFlexibleDate(t.due);
+
+                    const dateText = !date
+                        ? "⛔ ไม่ระบุเวลา"
+                        : date.toLocaleString("th-TH", {
+                            dateStyle: "medium",
+                            timeStyle: "short"
+                        });
+
                     msg += `📌 ${t.taskNo}. ${t.subject}\n`;
                     msg += `👨‍🏫 ${t.teacher}\n`;
-                    const date = new Date(t.due);
-
-                    const dateText = isNaN(date.getTime())
-                        ? "ไม่ระบุเวลา"
-                        : date.toLocaleString("th-TH");
-
                     msg += `📅 ${dateText}\n\n`;
                 }
 
                 return reply(replyToken, msg);
             }
 
-            // =========================
-            // CHECK PEOPLE
-            // =========================
+            /* =========================
+               CHECK PEOPLE
+            ========================= */
             if (text.startsWith("เช็คคน")) {
 
                 const parts = text.split(/\s+/);
@@ -237,7 +274,9 @@ export default async function handler(req, res) {
     }
 }
 
-// =========================
+/* =========================
+   LINE REPLY
+========================= */
 async function reply(token, message) {
     return axios.post(
         "https://api.line.me/v2/bot/message/reply",
