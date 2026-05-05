@@ -4,70 +4,57 @@ import { db } from "../lib/firebase.js";
 const BOT_NAME = "KBComSci";
 
 /* =========================
-   DATE PARSER (ROBUST)
+   DATE PARSER (SAFE)
 ========================= */
 function parseFlexibleDate(input) {
     if (!input) return null;
 
     input = String(input).trim();
 
-    let date = null;
-
-    // dd/mm/yyyy or dd/mm/yyyy hh:mm
+    // dd/mm/yyyy hh:mm
     const m = input.match(
         /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?$/
     );
 
     if (m) {
-        let [, d, mo, y, h = "0", min = "0"] = m;
+        let [, d, mo, y, h = 0, min = 0] = m;
 
         d = Number(d);
         mo = Number(mo) - 1;
         y = Number(y);
-        h = Number(h);
-        min = Number(min);
 
-        if (y > 3000) y -= 543;
+        if (y > 3000) y -= 543; // Buddhist year fix
 
-        return new Date(y, mo, d, h, min);
+        return new Date(y, mo, d, Number(h), Number(min));
     }
 
-    // fallback ISO / string date
-    date = new Date(input);
+    const d = new Date(input);
+    if (isNaN(d.getTime())) return null;
 
-    if (isNaN(date.getTime())) return null;
-
-    if (date.getFullYear() > 3000) {
-        date.setFullYear(date.getFullYear() - 543);
+    if (d.getFullYear() > 3000) {
+        d.setFullYear(d.getFullYear() - 543);
     }
 
-    return date;
+    return d;
 }
 
 /* =========================
-   FORMAT DATE (FIX DISPLAY)
+   FORMAT DATE
 ========================= */
 function formatDate(date) {
     if (!date) return "⛔ ไม่ระบุเวลา";
 
-    const d = String(date.getDate()).padStart(2, "0");
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const y = date.getFullYear();
-
-    const hh = date.getHours();
-    const mm = date.getMinutes();
-
-    const hasTime = hh !== 0 || mm !== 0;
-
-    if (hasTime) {
-        return `${d}/${m}/${y} ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
-    }
-
-    return `${d}/${m}/${y}`;
+    return date.toLocaleString("th-TH", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+    });
 }
 
 /* =========================
-   HANDLER
+   MAIN HANDLER
 ========================= */
 export default async function handler(req, res) {
     try {
@@ -75,14 +62,14 @@ export default async function handler(req, res) {
             return res.status(405).send("Method Not Allowed");
         }
 
-        const body = typeof req.body === "string"
-            ? JSON.parse(req.body)
-            : req.body;
+        const body =
+            typeof req.body === "string"
+                ? JSON.parse(req.body)
+                : req.body;
 
         const events = body.events || [];
 
         for (const event of events) {
-
             if (event.type !== "message") continue;
             if (!event.message || event.message.type !== "text") continue;
 
@@ -95,6 +82,32 @@ export default async function handler(req, res) {
                 .trim();
 
             const replyToken = event.replyToken;
+
+            /* =========================
+               HELP
+            ========================= */
+            if (text === "?") {
+                return reply(replyToken,
+`📌 วิธีใช้
+
+➕ เพิ่มงาน
+เพิ่มงาน
+วิชา
+ครู
+เนื้อหา
+กำหนดส่ง (dd/mm/yyyy hh:mm)
+วันที่สั่ง
+จำนวนนักเรียน
+
+📤 ส่งงาน
+ส่งแล้ว <เลขงาน> <เลขที่>
+
+📋 เช็คงาน
+เช็คงาน
+
+📋 เช็คคน
+เช็คคน <เลขงาน>`);
+            }
 
             /* =========================
                ADD TASK
@@ -119,9 +132,12 @@ export default async function handler(req, res) {
                 const start = lines[5];
                 const total = Number(lines[6]);
 
-                if (!dueDate) return reply(replyToken, "❌ วันที่ไม่ถูกต้อง");
+                if (!dueDate) {
+                    return reply(replyToken, "❌ วันที่ไม่ถูกต้อง");
+                }
+
                 if (!Number.isFinite(total)) {
-                    return reply(replyToken, "❌ จำนวนต้องเป็นตัวเลข");
+                    return reply(replyToken, "❌ จำนวนนักเรียนต้องเป็นตัวเลข");
                 }
 
                 const snap = await db.collection("tasks").get();
@@ -139,7 +155,44 @@ export default async function handler(req, res) {
                     createdAt: new Date()
                 });
 
-                return reply(replyToken, `✅ เพิ่มงานแล้ว (#${taskNo})`);
+                return reply(replyToken, `✅ เพิ่มงานสำเร็จ\n📌 เลขงาน: ${taskNo}`);
+            }
+
+            /* =========================
+               SUBMIT TASK
+            ========================= */
+            if (text.startsWith("ส่งแล้ว")) {
+
+                const parts = text.split(/\s+/);
+
+                const taskNo = Number(parts[1]);
+                const studentId = Number(parts[2]);
+
+                if (!Number.isInteger(taskNo) || !Number.isInteger(studentId)) {
+                    return reply(replyToken, "❌ ส่งแล้ว <เลขงาน> <เลขที่>");
+                }
+
+                const snap = await db.collection("tasks")
+                    .where("taskNo", "==", taskNo)
+                    .limit(1)
+                    .get();
+
+                if (snap.empty) {
+                    return reply(replyToken, "❌ ไม่พบงาน");
+                }
+
+                const doc = snap.docs[0];
+                const task = doc.data();
+
+                const submitted = task.submitted || [];
+
+                if (!submitted.includes(studentId)) {
+                    submitted.push(studentId);
+                }
+
+                await doc.ref.update({ submitted });
+
+                return reply(replyToken, "📌 ส่งงานแล้ว");
             }
 
             /* =========================
@@ -152,7 +205,7 @@ export default async function handler(req, res) {
                     .get();
 
                 if (snap.empty) {
-                    return reply(replyToken, "📭 ไม่มีงาน");
+                    return reply(replyToken, "📭 ยังไม่มีงาน");
                 }
 
                 let msg = "📋 งานทั้งหมด\n\n";
@@ -173,7 +226,47 @@ export default async function handler(req, res) {
                 return reply(replyToken, msg);
             }
 
-            return reply(replyToken, "พิมพ์ KBComSci ? เพื่อดูวิธีใช้");
+            /* =========================
+               CHECK PEOPLE
+            ========================= */
+            if (text.startsWith("เช็คคน")) {
+
+                const parts = text.split(/\s+/);
+                const taskNo = Number(parts[1]);
+
+                if (!Number.isInteger(taskNo)) {
+                    return reply(replyToken, "❌ ใช้: เช็คคน <เลขงาน>");
+                }
+
+                const snap = await db.collection("tasks")
+                    .where("taskNo", "==", taskNo)
+                    .limit(1)
+                    .get();
+
+                if (snap.empty) {
+                    return reply(replyToken, "❌ ไม่พบงาน");
+                }
+
+                const task = snap.docs[0].data();
+                const submitted = task.submitted || [];
+
+                const missing = [];
+
+                for (let i = 1; i <= (task.studentsTotal || 0); i++) {
+                    if (!submitted.includes(i)) {
+                        missing.push(i);
+                    }
+                }
+
+                return reply(
+                    replyToken,
+                    missing.length
+                        ? `❌ ยังไม่ส่ง: ${missing.join(", ")}`
+                        : "🎉 ส่งครบแล้ว"
+                );
+            }
+
+            return reply(replyToken, "พิมพ์ ? เพื่อดูวิธีใช้");
         }
 
         res.status(200).send("OK");
