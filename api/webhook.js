@@ -44,60 +44,50 @@ export default async function handler(req, res) {
             // =========================
             // ADD TASK (SESSION)
             // =========================
-            if (text === "เพิ่มงาน") {
-                sessions[userId] = { step: 1, data: {} };
-                return reply(replyToken, "📘 วิชาอะไร?");
-            }
+            if (text.startsWith("เพิ่มงาน")) {
+                const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
 
-            const s = sessions[userId];
+                // lines[0] = "เพิ่มงาน"
+                if (lines.length < 7) {
+                    return reply(replyToken,
+                        `❌ รูปแบบไม่ถูกต้อง
 
-            if (s?.step === 1) {
-                s.data.subject = text;
-                s.step = 2;
-                return reply(replyToken, "👨‍🏫 ครูชื่ออะไร?");
-            }
+📌 ใช้แบบนี้:
+เพิ่มงาน
+วิชา
+ครู
+เนื้อหา
+กำหนดส่ง
+วันที่สั่ง
+จำนวนนักเรียน`);
+                }
 
-            if (s?.step === 2) {
-                s.data.teacher = text;
-                s.step = 3;
-                return reply(replyToken, "📝 เนื้อหางาน?");
-            }
+                const subject = lines[1];
+                const teacher = lines[2];
+                const content = lines[3];
+                const due = lines[4];
+                const start = lines[5];
+                const total = parseInt(lines[6]);
 
-            if (s?.step === 3) {
-                s.data.content = text;
-                s.step = 4;
-                return reply(replyToken, "📅 กำหนดส่ง?");
-            }
-
-            if (s?.step === 4) {
-                s.data.due = text;
-                s.step = 5;
-                return reply(replyToken, "📅 วันที่สั่ง?");
-            }
-
-            if (s?.step === 5) {
-                s.data.start = text;
-                s.step = 6;
-                return reply(replyToken, "👥 จำนวนนักเรียน?");
-            }
-
-            if (s?.step === 6) {
-                s.data.total = parseInt(text);
+                if (Number.isNaN(total)) {
+                    return reply(replyToken, "❌ จำนวนนักเรียนต้องเป็นตัวเลข");
+                }
 
                 const docRef = await db.collection("tasks").add({
-                    subject: s.data.subject,
-                    teacher: s.data.teacher,
-                    content: s.data.content,
-                    due: s.data.due,
-                    start: s.data.start,
-                    studentsTotal: s.data.total,
+                    subject,
+                    teacher,
+                    content,
+                    due,
+                    start,
+                    studentsTotal: total,
                     submitted: [],
                     createdAt: new Date()
                 });
 
-                delete sessions[userId];
-
-                return reply(replyToken, `✅ เพิ่มงานสำเร็จ\n📌 taskId: ${docRef.id}`);
+                return reply(
+                    replyToken,
+                    `✅ เพิ่มงานสำเร็จ\n📌 taskId: ${docRef.id}`
+                );
             }
 
             // =========================
