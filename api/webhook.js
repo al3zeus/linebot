@@ -1,6 +1,9 @@
 import axios from "axios";
 import { db } from "../lib/firebase.js";
 
+// memory ชั่วคราว (MVP)
+const sessions = {};
+
 export default async function handler(req, res) {
     try {
         if (req.method !== "POST") {
@@ -18,36 +21,83 @@ export default async function handler(req, res) {
 
             const text = event.message.text;
             const replyToken = event.replyToken;
+            const userId = event.source.userId;
+
+            if (!sessions[userId]) sessions[userId] = {};
+
+            const session = sessions[userId];
 
             // =========================
-            // 🟢 MENU
+            // MENU
             // =========================
-            if (["menu", "เริ่ม", "สวัสดี", "hi"].includes(text)) {
+            if (text === "menu" || text === "เริ่ม" || text === "สวัสดี") {
                 await sendMenu(replyToken);
                 continue;
             }
 
             // =========================
-            // ➕ เพิ่มงาน
+            // ➕ เพิ่มงาน FLOW
             // =========================
             if (text === "เพิ่มงาน") {
-                await reply(replyToken, "📘 ใส่วิชา เช่น คณิตศาสตร์");
+                session.step = 1;
+                session.data = {};
+                await reply(replyToken, "📘 วิชาอะไร");
                 continue;
             }
 
-            if (text.startsWith("วิชา ")) {
-                const subject = text.replace("วิชา ", "");
+            if (session.step === 1) {
+                session.data.subject = text;
+                session.step = 2;
+                await reply(replyToken, "👨‍🏫 ครูชื่ออะไร");
+                continue;
+            }
 
+            if (session.step === 2) {
+                session.data.teacher = text;
+                session.step = 3;
+                await reply(replyToken, "📝 ชื่องานอะไร");
+                continue;
+            }
+
+            if (session.step === 3) {
+                session.data.title = text;
+                session.step = 4;
+                await reply(replyToken, "📅 วันเวลาเริ่ม (YYYY-MM-DD HH:mm)");
+                continue;
+            }
+
+            if (session.step === 4) {
+                session.data.start = text;
+                session.step = 5;
+                await reply(replyToken, "📅 วันเวลาส่ง (YYYY-MM-DD HH:mm)");
+                continue;
+            }
+
+            if (session.step === 5) {
+                session.data.due = text;
+                session.step = 6;
+                await reply(replyToken, "👥 จำนวนนักเรียน");
+                continue;
+            }
+
+            if (session.step === 6) {
+                session.data.total = parseInt(text);
+
+                // SAVE FIREBASE
                 await db.collection("tasks").add({
-                    subject,
-                    title: "ยังไม่ระบุ",
-                    teacher: "",
-                    studentsTotal: 0,
+                    subject: session.data.subject,
+                    teacher: session.data.teacher,
+                    title: session.data.title,
+                    start: session.data.start,
+                    due: session.data.due,
+                    studentsTotal: session.data.total,
                     submitted: [],
                     createdAt: new Date()
                 });
 
-                await reply(replyToken, "📌 เพิ่มวิชาแล้ว (ต่อยอดระบบได้)");
+                delete sessions[userId];
+
+                await reply(replyToken, "✅ เพิ่มงานเรียบร้อย");
                 continue;
             }
 
@@ -68,7 +118,9 @@ export default async function handler(req, res) {
                     const d = doc.data();
                     const remaining = (d.studentsTotal || 0) - (d.submitted?.length || 0);
 
-                    msg += `${i + 1}. ${d.subject}\n`;
+                    msg += `${i + 1}. ${d.title}\n`;
+                    msg += `วิชา: ${d.subject}\n`;
+                    msg += `ครู: ${d.teacher}\n`;
                     msg += `❌ ยังไม่ส่ง: ${remaining} คน\n\n`;
                 });
 
@@ -106,9 +158,6 @@ export default async function handler(req, res) {
                 continue;
             }
 
-            // =========================
-            // fallback
-            // =========================
             await sendMenu(replyToken);
         }
 
