@@ -1,6 +1,12 @@
 import axios from "axios";
 import { db } from "../lib/firebase.js";
 
+console.log("🔥 CRON HIT");
+
+console.log("📦 TASKS:", snap.size);
+
+console.log("⏰ NOW:", new Date().toISOString());
+
 export default async function handler(req, res) {
     const now = new Date();
 
