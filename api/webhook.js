@@ -1,7 +1,7 @@
 import axios from "axios";
 import { db } from "../lib/firebase.js";
 
-// memory ชั่วคราว (MVP)
+// memory session (MVP)
 const sessions = {};
 
 export default async function handler(req, res) {
@@ -25,72 +25,71 @@ export default async function handler(req, res) {
 
             if (!sessions[userId]) sessions[userId] = {};
 
-            const session = sessions[userId];
+            const s = sessions[userId];
 
             // =========================
-            // MENU
+            // 🟢 MENU (UI)
             // =========================
-            if (text === "menu" || text === "เริ่ม" || text === "สวัสดี") {
+            if (["menu", "เริ่ม", "สวัสดี"].includes(text)) {
                 await sendMenu(replyToken);
                 continue;
             }
 
             // =========================
-            // ➕ เพิ่มงาน FLOW
+            // ➕ ADD TASK FLOW (FULL)
             // =========================
             if (text === "เพิ่มงาน") {
-                session.step = 1;
-                session.data = {};
-                await reply(replyToken, "📘 วิชาอะไร");
+                s.step = 1;
+                s.data = {};
+                await reply(replyToken, "📘 ใส่วิชา");
                 continue;
             }
 
-            if (session.step === 1) {
-                session.data.subject = text;
-                session.step = 2;
-                await reply(replyToken, "👨‍🏫 ครูชื่ออะไร");
+            if (s.step === 1) {
+                s.data.subject = text;
+                s.step = 2;
+                await reply(replyToken, "👨‍🏫 ชื่อครู");
                 continue;
             }
 
-            if (session.step === 2) {
-                session.data.teacher = text;
-                session.step = 3;
-                await reply(replyToken, "📝 ชื่องานอะไร");
+            if (s.step === 2) {
+                s.data.teacher = text;
+                s.step = 3;
+                await reply(replyToken, "📝 ชื่องาน");
                 continue;
             }
 
-            if (session.step === 3) {
-                session.data.title = text;
-                session.step = 4;
-                await reply(replyToken, "📅 วันเวลาเริ่ม (YYYY-MM-DD HH:mm)");
+            if (s.step === 3) {
+                s.data.title = text;
+                s.step = 4;
+                await reply(replyToken, "📅 วันเวลาเริ่ม");
                 continue;
             }
 
-            if (session.step === 4) {
-                session.data.start = text;
-                session.step = 5;
-                await reply(replyToken, "📅 วันเวลาส่ง (YYYY-MM-DD HH:mm)");
+            if (s.step === 4) {
+                s.data.start = text;
+                s.step = 5;
+                await reply(replyToken, "📅 วันเวลาส่ง");
                 continue;
             }
 
-            if (session.step === 5) {
-                session.data.due = text;
-                session.step = 6;
+            if (s.step === 5) {
+                s.data.due = text;
+                s.step = 6;
                 await reply(replyToken, "👥 จำนวนนักเรียน");
                 continue;
             }
 
-            if (session.step === 6) {
-                session.data.total = parseInt(text);
+            if (s.step === 6) {
+                s.data.total = parseInt(text);
 
-                // SAVE FIREBASE
                 await db.collection("tasks").add({
-                    subject: session.data.subject,
-                    teacher: session.data.teacher,
-                    title: session.data.title,
-                    start: session.data.start,
-                    due: session.data.due,
-                    studentsTotal: session.data.total,
+                    subject: s.data.subject,
+                    teacher: s.data.teacher,
+                    title: s.data.title,
+                    start: s.data.start,
+                    due: s.data.due,
+                    studentsTotal: s.data.total,
                     submitted: [],
                     createdAt: new Date()
                 });
@@ -102,7 +101,7 @@ export default async function handler(req, res) {
             }
 
             // =========================
-            // 📋 เช็คงาน
+            // 📋 CHECK TASK (FLEX UI)
             // =========================
             if (text === "เช็คงาน") {
                 const snap = await db.collection("tasks").get();
@@ -112,24 +111,75 @@ export default async function handler(req, res) {
                     continue;
                 }
 
-                let msg = "📋 รายการงาน\n\n";
+                const bubbles = [];
 
                 snap.forEach((doc, i) => {
                     const d = doc.data();
                     const remaining = (d.studentsTotal || 0) - (d.submitted?.length || 0);
 
-                    msg += `${i + 1}. ${d.title}\n`;
-                    msg += `วิชา: ${d.subject}\n`;
-                    msg += `ครู: ${d.teacher}\n`;
-                    msg += `❌ ยังไม่ส่ง: ${remaining} คน\n\n`;
+                    bubbles.push({
+                        type: "bubble",
+                        body: {
+                            type: "box",
+                            layout: "vertical",
+                            contents: [
+                                {
+                                    type: "text",
+                                    text: `${d.title}`,
+                                    weight: "bold",
+                                    size: "lg"
+                                },
+                                {
+                                    type: "text",
+                                    text: `วิชา: ${d.subject}`,
+                                    size: "sm",
+                                    color: "#666"
+                                },
+                                {
+                                    type: "text",
+                                    text: `ครู: ${d.teacher}`,
+                                    size: "sm",
+                                    color: "#666"
+                                },
+                                {
+                                    type: "text",
+                                    text: `❌ ยังไม่ส่ง: ${remaining}`,
+                                    size: "sm",
+                                    color: "#ff0000"
+                                }
+                            ]
+                        }
+                    });
                 });
 
-                await reply(replyToken, msg);
+                await axios.post(
+                    "https://api.line.me/v2/bot/message/reply",
+                    {
+                        replyToken,
+                        messages: [
+                            {
+                                type: "flex",
+                                altText: "รายการงาน",
+                                contents: {
+                                    type: "carousel",
+                                    contents: bubbles
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${process.env.CHANNEL_ACCESS_TOKEN}`,
+                            "Content-Type": "application/json"
+                        }
+                    }
+                );
+
                 continue;
             }
 
             // =========================
-            // ✅ ส่งงาน
+            // ✅ SEND TASK
             // =========================
             if (text.startsWith("ส่งแล้ว")) {
                 const parts = text.split(" ");
@@ -148,10 +198,7 @@ export default async function handler(req, res) {
 
                 if (!data.submitted.includes(studentId)) {
                     data.submitted.push(studentId);
-
-                    await doc.ref.update({
-                        submitted: data.submitted
-                    });
+                    await doc.ref.update({ submitted: data.submitted });
                 }
 
                 await reply(replyToken, "✅ ส่งงานแล้ว");
@@ -176,35 +223,53 @@ async function sendMenu(replyToken) {
             replyToken,
             messages: [
                 {
-                    type: "text",
-                    text: "📌 เมนูหลัก",
-                    quickReply: {
-                        items: [
-                            {
-                                type: "action",
-                                action: {
-                                    type: "message",
-                                    label: "➕ เพิ่มงาน",
-                                    text: "เพิ่มงาน"
+                    type: "flex",
+                    altText: "เมนูหลัก",
+                    contents: {
+                        type: "bubble",
+                        body: {
+                            type: "box",
+                            layout: "vertical",
+                            contents: [
+                                {
+                                    type: "text",
+                                    text: "📌 เมนู",
+                                    weight: "bold",
+                                    size: "xl"
                                 }
-                            },
-                            {
-                                type: "action",
-                                action: {
-                                    type: "message",
-                                    label: "📋 เช็คงาน",
-                                    text: "เช็คงาน"
+                            ]
+                        },
+                        footer: {
+                            type: "box",
+                            layout: "vertical",
+                            contents: [
+                                {
+                                    type: "button",
+                                    style: "primary",
+                                    action: {
+                                        type: "message",
+                                        label: "➕ เพิ่มงาน",
+                                        text: "เพิ่มงาน"
+                                    }
+                                },
+                                {
+                                    type: "button",
+                                    action: {
+                                        type: "message",
+                                        label: "📋 เช็คงาน",
+                                        text: "เช็คงาน"
+                                    }
+                                },
+                                {
+                                    type: "button",
+                                    action: {
+                                        type: "message",
+                                        label: "✅ ส่งงาน",
+                                        text: "ส่งแล้ว 1 12"
+                                    }
                                 }
-                            },
-                            {
-                                type: "action",
-                                action: {
-                                    type: "message",
-                                    label: "✅ ส่งงาน",
-                                    text: "ส่งแล้ว 1 12"
-                                }
-                            }
-                        ]
+                            ]
+                        }
                     }
                 }
             ]
