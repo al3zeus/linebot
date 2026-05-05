@@ -145,12 +145,16 @@ export default async function handler(req, res) {
 
                 let msg = "📋 งานทั้งหมด\n\n";
 
+                let index = 1;
+
                 snap.forEach(doc => {
                     const t = doc.data();
-                    msg += `📌 ${t.subject}\n`;
+
+                    msg += `📌 ${index}. ${t.subject}\n`;
                     msg += `👨‍🏫 ${t.teacher}\n`;
-                    msg += `📅 ${t.due}\n`;
-                    msg += `🆔 ${doc.id}\n\n`;
+                    msg += `📅 ${t.due}\n\n`;
+
+                    index++;
                 });
 
                 return reply(replyToken, msg);
