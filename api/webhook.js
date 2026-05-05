@@ -4,15 +4,15 @@ import { db } from "../lib/firebase.js";
 const BOT_NAME = "KBComSci";
 
 /* =========================
-   DATE PARSER (FIXED)
+   SAFE DATE PARSER
 ========================= */
 function parseFlexibleDate(input) {
     if (!input) return null;
 
-    let date;
+    const str = String(input).trim();
 
-    // dd/mm/yyyy [hh:mm]
-    const m = input.match(
+    // 📌 format: dd/mm/yyyy or dd/mm/yyyy hh:mm
+    const m = str.match(
         /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?$/
     );
 
@@ -23,35 +23,39 @@ function parseFlexibleDate(input) {
         mo = Number(mo) - 1;
         y = Number(y);
 
-        // พ.ศ.
-        if (y > 3000) y -= 543;
+        // 🇹🇭 BE → CE conversion
+        if (y > 2400) y -= 543;
 
-        return new Date(y, mo, d, h, min);
+        const date = new Date(y, mo, d, Number(h), Number(min));
+
+        return isNaN(date.getTime()) ? null : date;
     }
 
-    date = new Date(input);
+    const date = new Date(str);
 
     if (isNaN(date.getTime())) return null;
 
-    const year = date.getFullYear();
+    let year = date.getFullYear();
 
-    if (year > 3000) {
+    if (year > 2400) {
         date.setFullYear(year - 543);
     }
 
     return date;
 }
 
+/* =========================
+   HANDLER
+========================= */
 export default async function handler(req, res) {
     try {
         if (req.method !== "POST") {
             return res.status(405).send("Method Not Allowed");
         }
 
-        const body =
-            typeof req.body === "string"
-                ? JSON.parse(req.body)
-                : req.body;
+        const body = typeof req.body === "string"
+            ? JSON.parse(req.body)
+            : req.body;
 
         const events = body.events || [];
 
@@ -62,14 +66,9 @@ export default async function handler(req, res) {
 
             const rawText = (event.message.text || "").trim();
 
-            // ต้องมีแท็ก bot
-            const isMentioned = rawText.includes(BOT_NAME);
-            if (!isMentioned) continue;
+            if (!rawText.includes(BOT_NAME)) continue;
 
-            let text = rawText
-                .replace(/@\S+\s?/g, "")
-                .trim();
-
+            let text = rawText.replace(/@\S+\s?/g, "").trim();
             const replyToken = event.replyToken;
 
             /* =========================
@@ -79,22 +78,16 @@ export default async function handler(req, res) {
                 return reply(replyToken,
 `📌 วิธีใช้
 
-➕ เพิ่มงาน (7 บรรทัด)
 เพิ่มงาน
 วิชา
 ครู
 เนื้อหา
-กำหนดส่ง
+กำหนดส่ง (dd/mm/yyyy)
 วันที่สั่ง
 จำนวนนักเรียน
 
-📋 เช็คงาน
 เช็คงาน
-
-📤 ส่งงาน
 ส่งแล้ว <เลขงาน> <เลขที่>
-
-📋 เช็คคน
 เช็คคน <เลขงาน>`);
             }
 
@@ -110,11 +103,7 @@ export default async function handler(req, res) {
                     .filter(Boolean);
 
                 if (lines.length < 7) {
-                    return reply(replyToken,
-`❌ รูปแบบไม่ถูกต้อง
-
-ต้องมี 7 บรรทัด:
-วิชา / ครู / เนื้อหา / กำหนดส่ง / วันที่สั่ง / จำนวน`);
+                    return reply(replyToken, "❌ ต้องมี 7 บรรทัด");
                 }
 
                 const subject = lines[1];
@@ -125,13 +114,8 @@ export default async function handler(req, res) {
                 const start = lines[5];
                 const total = Number(lines[6]);
 
-                if (!dueDate) {
-                    return reply(replyToken, "❌ วันที่ไม่ถูกต้อง");
-                }
-
-                if (!Number.isFinite(total)) {
-                    return reply(replyToken, "❌ จำนวนนักเรียนต้องเป็นตัวเลข");
-                }
+                if (!dueDate) return reply(replyToken, "❌ วันที่ไม่ถูกต้อง");
+                if (!Number.isFinite(total)) return reply(replyToken, "❌ จำนวนต้องเป็นตัวเลข");
 
                 const snap = await db.collection("tasks").get();
                 const taskNo = snap.size + 1;
@@ -148,12 +132,11 @@ export default async function handler(req, res) {
                     createdAt: new Date()
                 });
 
-                return reply(replyToken,
-                    `✅ เพิ่มงานสำเร็จ\n📌 เลขงาน: ${taskNo}`);
+                return reply(replyToken, `✅ เพิ่มงานสำเร็จ\n📌 เลขงาน: ${taskNo}`);
             }
 
             /* =========================
-               SUBMIT TASK
+               SUBMIT
             ========================= */
             if (text.startsWith("ส่งแล้ว")) {
 
@@ -163,8 +146,7 @@ export default async function handler(req, res) {
                 const studentId = Number(parts[2]);
 
                 if (!Number.isInteger(taskNo) || !Number.isInteger(studentId)) {
-                    return reply(replyToken,
-                        "❌ ใช้: ส่งแล้ว <เลขงาน> <เลขที่>");
+                    return reply(replyToken, "❌ format ผิด");
                 }
 
                 const snap = await db.collection("tasks")
@@ -172,9 +154,7 @@ export default async function handler(req, res) {
                     .limit(1)
                     .get();
 
-                if (snap.empty) {
-                    return reply(replyToken, "❌ ไม่พบงาน");
-                }
+                if (snap.empty) return reply(replyToken, "❌ ไม่พบงาน");
 
                 const doc = snap.docs[0];
                 const task = doc.data();
@@ -199,9 +179,7 @@ export default async function handler(req, res) {
                     .orderBy("taskNo", "asc")
                     .get();
 
-                if (snap.empty) {
-                    return reply(replyToken, "📭 ยังไม่มีงาน");
-                }
+                if (snap.empty) return reply(replyToken, "📭 ไม่มีงาน");
 
                 let msg = "📋 งานทั้งหมด\n\n";
 
@@ -211,11 +189,8 @@ export default async function handler(req, res) {
                     const date = parseFlexibleDate(t.due);
 
                     const dateText = !date
-                        ? "⛔ ไม่ระบุเวลา"
-                        : date.toLocaleString("th-TH", {
-                            dateStyle: "medium",
-                            timeStyle: "short"
-                        });
+                        ? "⛔ ไม่ระบุ"
+                        : date.toLocaleDateString("th-TH");
 
                     msg += `📌 ${t.taskNo}. ${t.subject}\n`;
                     msg += `👨‍🏫 ${t.teacher}\n`;
@@ -234,7 +209,7 @@ export default async function handler(req, res) {
                 const taskNo = Number(parts[1]);
 
                 if (!Number.isInteger(taskNo)) {
-                    return reply(replyToken, "❌ ใช้: เช็คคน <เลขงาน>");
+                    return reply(replyToken, "❌ format ผิด");
                 }
 
                 const snap = await db.collection("tasks")
@@ -242,9 +217,7 @@ export default async function handler(req, res) {
                     .limit(1)
                     .get();
 
-                if (snap.empty) {
-                    return reply(replyToken, "❌ ไม่พบงาน");
-                }
+                if (snap.empty) return reply(replyToken, "❌ ไม่พบงาน");
 
                 const task = snap.docs[0].data();
 
@@ -275,7 +248,7 @@ export default async function handler(req, res) {
 }
 
 /* =========================
-   LINE REPLY
+   REPLY
 ========================= */
 async function reply(token, message) {
     return axios.post(
