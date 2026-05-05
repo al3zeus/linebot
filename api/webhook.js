@@ -91,7 +91,7 @@ export default async function handler(req, res) {
                 const subject = lines[1];
                 const teacher = lines[2];
                 const content = lines[3];
-                const due = lines[4];
+                const due = new Date(lines[4]).getTime();
                 const start = lines[5];
                 const total = Number(lines[6]);
 
