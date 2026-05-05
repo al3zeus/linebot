@@ -1,8 +1,6 @@
 import axios from "axios";
 import { db } from "../lib/firebase.js";
 
-const sessions = {};
-
 export default async function handler(req, res) {
     try {
         if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
@@ -23,8 +21,7 @@ export default async function handler(req, res) {
                 return reply(replyToken,
 `📌 วิธีใช้
 
-➕ เพิ่มงาน (วางทีเดียว 7 บรรทัด)
-
+➕ เพิ่มงาน (7 บรรทัด)
 เพิ่มงาน
 วิชา
 ครู
@@ -44,10 +41,15 @@ export default async function handler(req, res) {
             }
 
             // =========================
-            // ADD TASK
+            // ADD TASK (TASKNO SYSTEM)
             // =========================
             if (text.startsWith("เพิ่มงาน")) {
-                const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+
+                const lines = text
+                    .replace(/\u00A0/g, " ")
+                    .split("\n")
+                    .map(l => l.trim())
+                    .filter(Boolean);
 
                 if (lines.length < 7) {
                     return reply(replyToken,
@@ -64,61 +66,64 @@ export default async function handler(req, res) {
                 const start = lines[5];
                 const total = Number(lines[6]);
 
-                if (!Number.isInteger(total)) {
+                if (!Number.isFinite(total)) {
                     return reply(replyToken, "❌ จำนวนนักเรียนต้องเป็นตัวเลข");
                 }
 
-                const docRef = await db.collection("tasks").add({
-                    subject,
-                    teacher,
-                    content,
-                    due,
-                    start,
+                // 👉 สร้าง taskNo (สำคัญ)
+                const snap = await db.collection("tasks").get();
+                const taskNo = snap.size + 1;
+
+                await db.collection("tasks").add({
+                    taskNo,
+                    subject: subject || "-",
+                    teacher: teacher || "-",
+                    content: content || "-",
+                    due: due || "-",
+                    start: start || "-",
                     studentsTotal: total,
                     submitted: [],
                     createdAt: new Date()
                 });
 
                 return reply(replyToken,
-                    `✅ เพิ่มงานสำเร็จ\n📌 เลขงาน: ${docRef.id}`);
+                    `✅ เพิ่มงานสำเร็จ\n📌 เลขงาน: ${taskNo}`);
             }
 
             // =========================
-            // SUBMIT TASK (FIXED NA N)
+            // SUBMIT TASK (NO NaN)
             // =========================
             if (text.startsWith("ส่งแล้ว")) {
 
                 const parts = text.trim().split(/\s+/);
 
-                const taskIndex = Number(parts[1]);
+                const taskNo = Number(parts[1]);
                 const studentId = Number(parts[2]);
 
-                if (!Number.isInteger(taskIndex) || !Number.isInteger(studentId)) {
+                if (!Number.isInteger(taskNo) || !Number.isInteger(studentId)) {
                     return reply(replyToken, "❌ ใช้: ส่งแล้ว <เลขงาน> <เลขที่>");
                 }
 
                 const snap = await db.collection("tasks")
-                    .orderBy("createdAt", "asc")
+                    .where("taskNo", "==", taskNo)
                     .get();
 
-                const docs = snap.docs;
-
-                if (taskIndex < 1 || taskIndex > docs.length) {
-                    return reply(replyToken, "❌ ไม่พบงานลำดับนี้");
+                if (snap.empty) {
+                    return reply(replyToken, "❌ ไม่พบงาน");
                 }
 
-                const doc = docs[taskIndex - 1];
+                const doc = snap.docs[0];
                 const task = doc.data();
 
-                if (!task.submitted) task.submitted = [];
+                const submitted = Array.isArray(task.submitted)
+                    ? task.submitted
+                    : [];
 
-                if (!task.submitted.includes(studentId)) {
-                    task.submitted.push(studentId);
+                if (!submitted.includes(studentId)) {
+                    submitted.push(studentId);
                 }
 
-                await doc.ref.update({
-                    submitted: task.submitted
-                });
+                await doc.ref.update({ submitted });
 
                 return reply(replyToken, "📌 ส่งงานแล้ว");
             }
@@ -129,7 +134,7 @@ export default async function handler(req, res) {
             if (text === "เช็คงาน") {
 
                 const snap = await db.collection("tasks")
-                    .orderBy("createdAt", "asc")
+                    .orderBy("taskNo", "asc")
                     .get();
 
                 if (snap.empty) {
@@ -138,13 +143,13 @@ export default async function handler(req, res) {
 
                 let msg = "📋 งานทั้งหมด\n\n";
 
-                snap.forEach((doc, i) => {
+                for (const doc of snap.docs) {
                     const t = doc.data();
 
-                    msg += `📌 ${i + 1}. ${t.subject}\n`;
-                    msg += `👨‍🏫 ${t.teacher}\n`;
-                    msg += `📅 ${t.due}\n\n`;
-                });
+                    msg += `📌 ${t.taskNo}. ${t.subject || "-"}\n`;
+                    msg += `👨‍🏫 ${t.teacher || "-"}\n`;
+                    msg += `📅 ${t.due || "-"}\n\n`;
+                }
 
                 return reply(replyToken, msg);
             }
@@ -155,19 +160,17 @@ export default async function handler(req, res) {
             if (text.startsWith("เช็คคน")) {
 
                 const parts = text.split(/\s+/);
-                const taskIndex = Number(parts[1]);
+                const taskNo = Number(parts[1]);
 
                 const snap = await db.collection("tasks")
-                    .orderBy("createdAt", "asc")
+                    .where("taskNo", "==", taskNo)
                     .get();
 
-                const docs = snap.docs;
-
-                if (!Number.isInteger(taskIndex) || taskIndex < 1 || taskIndex > docs.length) {
+                if (snap.empty) {
                     return reply(replyToken, "❌ ไม่พบงาน");
                 }
 
-                const task = docs[taskIndex - 1].data();
+                const task = snap.docs[0].data();
 
                 const missing = [];
 
