@@ -258,11 +258,16 @@ export default async function handler(req, res) {
 
 // =========================
 async function reply(token, message) {
-    await axios.post(
-        "https://api.line.me/v2/message/reply",
+    return axios.post(
+        "https://api.line.me/v2/bot/message/reply", // ✅ FIX ตรงนี้
         {
             replyToken: token,
-            messages: [{ type: "text", text: message }]
+            messages: [
+                {
+                    type: "text",
+                    text: message
+                }
+            ]
         },
         {
             headers: {
