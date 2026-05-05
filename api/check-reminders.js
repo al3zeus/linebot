@@ -1,49 +1,80 @@
 import axios from "axios";
 import { db } from "../lib/firebase.js";
 
-console.log("🔥 CRON HIT");
-
-console.log("📦 TASKS:", snap.size);
-
-console.log("⏰ NOW:", new Date().toISOString());
-
 export default async function handler(req, res) {
-    const now = new Date();
+    try {
+        console.log("🔥 CRON HIT");
 
-    const snap = await db.collection("tasks").get();
+        // =========================
+        // 1. GET ALL TASKS
+        // =========================
+        const snap = await db.collection("tasks").get();
 
-    for (const doc of snap.docs) {
-        const task = doc.data();
-        const reminders = task.reminders || [];
+        console.log("📦 TASKS:", snap.size);
 
-        let changed = false;
+        // =========================
+        // 2. LOOP TASKS
+        // =========================
+        for (const doc of snap.docs) {
+            const task = doc.data();
 
-        for (let r of reminders) {
-            if (!r.sent && new Date(r.time) <= now) {
+            console.log("📌 TASK:", task.title);
 
-                await sendLineMessage(
-                    `📌 งาน "${task.title}" ถึงเวลาแจ้งเตือน (${r.type})`
-                );
+            const reminders = task.reminders || [];
+            let changed = false;
 
-                r.sent = true;
-                changed = true;
+            // =========================
+            // 3. CHECK REMINDERS
+            // =========================
+            for (let r of reminders) {
+                const now = new Date();
+                const remindTime = new Date(r.time);
+
+                console.log("⏰ CHECK:", r.type, r.sent);
+
+                if (!r.sent && remindTime <= now) {
+
+                    console.log("🚀 SEND:", task.title, r.type);
+
+                    await sendLineMessage(
+                        `📌 งาน: ${task.title}\n⏰ เตือน: ${r.type}`
+                    );
+
+                    r.sent = true;
+                    changed = true;
+                }
+            }
+
+            // =========================
+            // 4. UPDATE FIRESTORE
+            // =========================
+            if (changed) {
+                await doc.ref.update({ reminders });
             }
         }
 
-        if (changed) {
-            await doc.ref.update({ reminders });
-        }
-    }
+        return res.status(200).send("OK");
 
-    res.status(200).send("OK");
+    } catch (err) {
+        console.error("❌ CRON ERROR:", err);
+        return res.status(500).send(err.message);
+    }
 }
 
+// =========================
+// LINE PUSH FUNCTION
+// =========================
 async function sendLineMessage(text) {
-    await axios.post(
+    return axios.post(
         "https://api.line.me/v2/bot/message/push",
         {
-            to: "ALL_USERS",
-            messages: [{ type: "text", text }]
+            to: process.env.LINE_USER_ID, // เปลี่ยนเป็น userId จริงหรือ loop users ทีหลัง
+            messages: [
+                {
+                    type: "text",
+                    text
+                }
+            ]
         },
         {
             headers: {
