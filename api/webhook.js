@@ -9,10 +9,17 @@ const BOT_NAME = "KBComSci";
 function parseFlexibleDate(input) {
     if (!input) return null;
 
-    const str = String(input).trim();
+    // 🔥 FIX 1: timestamp (Firestore / number)
+    if (typeof input === "number") {
+        const d = new Date(input);
+        return isNaN(d.getTime()) ? null : d;
+    }
 
-    // 📌 format: dd/mm/yyyy or dd/mm/yyyy hh:mm
-    const m = str.match(
+    input = String(input).trim();
+
+    let date;
+
+    const m = input.match(
         /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?$/
     );
 
@@ -23,22 +30,17 @@ function parseFlexibleDate(input) {
         mo = Number(mo) - 1;
         y = Number(y);
 
-        // 🇹🇭 BE → CE conversion
-        if (y > 2400) y -= 543;
+        if (y > 3000) y -= 543;
 
-        const date = new Date(y, mo, d, Number(h), Number(min));
-
-        return isNaN(date.getTime()) ? null : date;
+        return new Date(y, mo, d, h, min);
     }
 
-    const date = new Date(str);
+    date = new Date(input);
 
     if (isNaN(date.getTime())) return null;
 
-    let year = date.getFullYear();
-
-    if (year > 2400) {
-        date.setFullYear(year - 543);
+    if (date.getFullYear() > 3000) {
+        date.setFullYear(date.getFullYear() - 543);
     }
 
     return date;
@@ -76,7 +78,7 @@ export default async function handler(req, res) {
             ========================= */
             if (text === "?") {
                 return reply(replyToken,
-`📌 วิธีใช้
+                    `📌 วิธีใช้
 
 เพิ่มงาน
 วิชา
