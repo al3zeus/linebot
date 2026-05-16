@@ -1,26 +1,30 @@
+// api/check-remainder.js
 import axios from "axios";
-import { db } from "../lib/firebase.js";
+import { supabase } from "../lib/supabase.js";
 
 export default async function handler(req, res) {
     try {
-        console.log("🔥 SMART REMINDER CRON");
+        console.log("🔥 SMART REMINDER CRON SYSTEM");
 
-        const tasksSnap = await db.collection("tasks").get();
-        const groupsSnap = await db.collection("groups").get();
+        // 1. ดึงงานทั้งหมดที่ยังเปิดอยู่ (is_active: true)
+        const { data: tasks, error: tasksError } = await supabase
+            .from('homeworks')
+            .select('*')
+            .eq('is_active', true);
+
+        if (tasksError) throw tasksError;
 
         const now = Date.now();
 
-        for (const taskDoc of tasksSnap.docs) {
-            const task = taskDoc.data();
+        // 2. วนลูปตรวจสอบงานแต่ละชิ้น
+        for (const task of tasks) {
+            // ถ้างานชิ้นนี้ไม่มีข้อมูลกลุ่มแชท หรือไม่มีวันส่ง ให้ข้ามไปก่อน
+            if (!task.line_group_id || !task.deadline_date) continue;
 
-            if (!task.due) continue;
-
-            const dueTime = new Date(task.due).getTime();
+            const dueTime = new Date(task.deadline_date).getTime();
             if (Number.isNaN(dueTime)) continue;
 
-            // =========================
-            // DEFINE REMINDERS (AUTO)
-            // =========================
+            // ตั้งเวลาแจ้งเตือนล่วงหน้าอัตโนมัติ
             const reminders = [
                 {
                     type: "1 วันก่อนส่ง",
@@ -35,52 +39,45 @@ export default async function handler(req, res) {
             ];
 
             for (const r of reminders) {
-
-                // =========================
-                // CHECK TIME
-                // =========================
+                // ตรวจสอบว่าถึงเวลาแจ้งเตือนในลูปปัจจุบันหรือยัง
                 if (now < r.time) continue;
 
-                // =========================
-                // UNIQUE KEY (NO DUPLICATE)
-                // =========================
-                const logKey = `${taskDoc.id}_${r.key}`;
+                // สร้าง Unique Key ป้องกันการเตือนซ้ำ (อิงตาม ID หลักของงาน และคีย์เวลา)
+                const logKey = `${task.id}_${r.key}`;
 
-                const logRef = db.collection("reminder_logs").doc(logKey);
-                const logSnap = await logRef.get();
+                // ตรวจสอบในตาราง reminder_logs ว่าเคยส่งเตือนชิ้นนี้ไปหรือยัง
+                const { data: existingLog, error: logError } = await supabase
+                    .from('reminder_logs')
+                    .select('log_key')
+                    .eq('log_key', logKey)
+                    .maybeSingle();
 
-                if (logSnap.exists) {
-                    console.log("⛔ SKIP:", logKey);
+                if (logError) throw logError;
+
+                // ถ้าเจอบันทึกเดิม แปลว่าเตือนไปแล้ว -> ข้ามทันที
+                if (existingLog) {
+                    console.log("⛔ SKIP DUPLICATE REMINDER:", logKey);
                     continue;
                 }
 
-                console.log("🚀 SEND:", task.subject, r.type);
+                console.log("🚀 SEND REMINDER:", task.subject_name, r.type);
 
-                // =========================
-                // MESSAGE
-                // =========================
-                const message = `📌 งาน: ${task.subject}
-📝 ${task.content}
-⏰ เตือน: ${r.type}`;
+                // รูปแบบข้อความแจ้งเตือนในกลุ่มไลน์
+                const message = `📌 งาน: ${task.subject_name}\n📝 ${task.content}\n⏰ เตือน: ${r.type}`;
 
-                // =========================
-                // SEND TO ALL GROUPS
-                // =========================
-                const sendPromises = groupsSnap.docs.map(g => {
-                    const groupId = g.data().groupId;
-                    return sendLineMessage(groupId, message);
-                });
+                // ยิงแจ้งเตือนกลับไปยังกลุ่มไลน์ต้นทางของงานชิ้นนั้นๆ
+                await sendLineMessage(task.line_group_id, message);
 
-                await Promise.all(sendPromises);
+                // บันทึก Log ลงตารางป้องกันบอทยิงซ้ำรอบหน้า
+                const { error: insertLogError } = await supabase
+                    .from('reminder_logs')
+                    .insert([{
+                        log_key: logKey,
+                        task_id: task.id,
+                        reminder_type: r.type
+                    }]);
 
-                // =========================
-                // LOCK LOG
-                // =========================
-                await logRef.set({
-                    taskId: taskDoc.id,
-                    type: r.type,
-                    sentAt: new Date()
-                });
+                if (insertLogError) throw insertLogError;
             }
         }
 
@@ -92,7 +89,7 @@ export default async function handler(req, res) {
     }
 }
 
-// =========================
+// ฟังก์ชันยิงแจ้งเตือนตรงเข้ากลุ่มไลน์
 async function sendLineMessage(to, text) {
     return axios.post(
         "https://api.line.me/v2/bot/message/push",

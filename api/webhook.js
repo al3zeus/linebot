@@ -1,5 +1,7 @@
+// api/webhook.js
 import axios from "axios";
-import { db } from "../lib/firebase.js";
+// 🎯 1. เปลี่ยนมา Import จากเซนเตอร์กลางที่เตรียมไว้
+import { supabase } from "../lib/supabase.js"; 
 
 const BOT_NAME = "KBComSci";
 
@@ -8,23 +10,19 @@ const BOT_NAME = "KBComSci";
 ========================= */
 function parseFlexibleDate(input) {
     if (!input) return null;
-
     input = String(input).trim();
 
-    // dd/mm/yyyy hh:mm
     const m = input.match(
         /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?$/
     );
 
     if (m) {
         let [, d, mo, y, h = 0, min = 0] = m;
-
         d = Number(d);
         mo = Number(mo) - 1;
         y = Number(y);
 
         if (y > 3000) y -= 543; // Buddhist year fix
-
         return new Date(y, mo, d, Number(h), Number(min));
     }
 
@@ -34,15 +32,17 @@ function parseFlexibleDate(input) {
     if (d.getFullYear() > 3000) {
         d.setFullYear(d.getFullYear() - 543);
     }
-
     return d;
 }
 
 /* =========================
    FORMAT DATE
 ========================= */
-function formatDate(date) {
-    if (!date) return "⛔ ไม่ระบุเวลา";
+function formatDate(dateString) {
+    if (!dateString) return "⛔ ไม่ระบุเวลา";
+    
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return "⛔ ไม่ระบุเวลา";
 
     return date.toLocaleString("th-TH", {
         day: "2-digit",
@@ -62,11 +62,7 @@ export default async function handler(req, res) {
             return res.status(405).send("Method Not Allowed");
         }
 
-        const body =
-            typeof req.body === "string"
-                ? JSON.parse(req.body)
-                : req.body;
-
+        const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
         const events = body.events || [];
 
         for (const event of events) {
@@ -74,17 +70,13 @@ export default async function handler(req, res) {
             if (!event.message || event.message.type !== "text") continue;
 
             const rawText = (event.message.text || "").trim();
-
             if (!rawText.includes(BOT_NAME)) continue;
 
-            let text = rawText
-                .replace(/@\S+\s?/g, "")
-                .trim();
-
+            let text = rawText.replace(/@\S+\s?/g, "").trim();
             const replyToken = event.replyToken;
 
             /* =========================
-               HELP
+               HELP (?)
             ========================= */
             if (text === "?") {
                 return reply(replyToken,
@@ -110,10 +102,9 @@ export default async function handler(req, res) {
             }
 
             /* =========================
-               ADD TASK
+               ADD TASK (เพิ่มงาน)
             ========================= */
             if (text.startsWith("เพิ่มงาน")) {
-
                 const lines = text
                     .replace(/\u00A0/g, " ")
                     .split("\n")
@@ -127,7 +118,6 @@ export default async function handler(req, res) {
                 const subject = lines[1];
                 const teacher = lines[2];
                 const content = lines[3];
-
                 const dueDate = parseFlexibleDate(lines[4]);
                 const start = lines[5];
                 const total = Number(lines[6]);
@@ -140,31 +130,41 @@ export default async function handler(req, res) {
                     return reply(replyToken, "❌ จำนวนนักเรียนต้องเป็นตัวเลข");
                 }
 
-                const snap = await db.collection("tasks").get();
-                const taskNo = snap.size + 1;
+                // 🎯 2. ดักจับ ID กลุ่มไลน์/ห้องแชท อัตโนมัติจาก Event ต้นทาง
+                const sourceId = event.source.groupId || event.source.roomId || event.source.userId;
 
-                await db.collection("tasks").add({
-                    taskNo,
-                    subject,
-                    teacher,
-                    content,
-                    due: dueDate.getTime(),
-                    start,
-                    studentsTotal: total,
-                    submitted: [],
-                    createdAt: new Date()
-                });
+                const { count, error: countError } = await supabase
+                    .from('homeworks')
+                    .select('*', { count: 'exact', head: true });
+
+                if (countError) throw countError;
+                const taskNo = (count || 0) + 1;
+
+                // บันทึกลง Supabase
+                const { error: insertError } = await supabase
+                    .from('homeworks')
+                    .insert([{
+                        task_no: taskNo,
+                        subject_name: subject,
+                        teacher_name: teacher,
+                        content: content,
+                        deadline_date: dueDate.toISOString(),
+                        assign_date: start,
+                        class_size: total,
+                        submitted: [],
+                        line_group_id: sourceId // 🎯 3. เพิ่มฟิลด์เก็บ ID สำหรับใช้ส่งแจ้งเตือนภัยแบบอัตโนมัติ
+                    }]);
+
+                if (insertError) throw insertError;
 
                 return reply(replyToken, `✅ เพิ่มงานสำเร็จ\n📌 เลขงาน: ${taskNo}`);
             }
 
             /* =========================
-               SUBMIT TASK
+               SUBMIT TASK (ส่งแล้ว)
             ========================= */
             if (text.startsWith("ส่งแล้ว")) {
-
                 const parts = text.split(/\s+/);
-
                 const taskNo = Number(parts[1]);
                 const studentId = Number(parts[2]);
 
@@ -172,54 +172,54 @@ export default async function handler(req, res) {
                     return reply(replyToken, "❌ ส่งแล้ว <เลขงาน> <เลขที่>");
                 }
 
-                const snap = await db.collection("tasks")
-                    .where("taskNo", "==", taskNo)
-                    .limit(1)
-                    .get();
+                const { data: task, error: fetchError } = await supabase
+                    .from('homeworks')
+                    .select('id, submitted')
+                    .eq('task_no', taskNo)
+                    .maybeSingle();
 
-                if (snap.empty) {
+                if (fetchError) throw fetchError;
+                if (!task) {
                     return reply(replyToken, "❌ ไม่พบงาน");
                 }
 
-                const doc = snap.docs[0];
-                const task = doc.data();
-
-                const submitted = task.submitted || [];
-
-                if (!submitted.includes(studentId)) {
-                    submitted.push(studentId);
+                let currentSubmitted = task.submitted || [];
+                if (!currentSubmitted.includes(studentId)) {
+                    currentSubmitted.push(studentId);
                 }
 
-                await doc.ref.update({ submitted });
+                const { error: updateError } = await supabase
+                    .from('homeworks')
+                    .update({ submitted: currentSubmitted })
+                    .eq('id', task.id);
+
+                if (updateError) throw updateError;
 
                 return reply(replyToken, "📌 ส่งงานแล้ว");
             }
 
             /* =========================
-               CHECK TASK
+               CHECK TASK (เช็คงาน)
             ========================= */
             if (text === "เช็คงาน") {
+                const { data: tasks, error: selectError } = await supabase
+                    .from('homeworks')
+                    .select('*')
+                    .eq('is_active', true)
+                    .order('task_no', { ascending: true });
 
-                const snap = await db.collection("tasks")
-                    .orderBy("taskNo", "asc")
-                    .get();
+                if (selectError) throw selectError;
 
-                if (snap.empty) {
+                if (!tasks || tasks.length === 0) {
                     return reply(replyToken, "📭 ยังไม่มีงาน");
                 }
 
                 let msg = "📋 งานทั้งหมด\n\n";
 
-                for (const doc of snap.docs) {
-                    const t = doc.data();
-
-                    const date = new Date(t.due);
-                    const dateText = isNaN(date.getTime())
-                        ? "⛔ ไม่ระบุเวลา"
-                        : formatDate(date);
-
-                    msg += `📌 ${t.taskNo}. ${t.subject}\n`;
-                    msg += `👨‍🏫 ${t.teacher}\n`;
+                for (const t of tasks) {
+                    const dateText = formatDate(t.deadline_date);
+                    msg += `📌 ${t.task_no}. ${t.subject_name}\n`;
+                    msg += `👨‍🏫 ${t.teacher_name || 'ไม่ระบุ'}\n`;
                     msg += `📅 ${dateText}\n\n`;
                 }
 
@@ -227,10 +227,9 @@ export default async function handler(req, res) {
             }
 
             /* =========================
-               CHECK PEOPLE
+               CHECK PEOPLE (เช็คคน)
             ========================= */
             if (text.startsWith("เช็คคน")) {
-
                 const parts = text.split(/\s+/);
                 const taskNo = Number(parts[1]);
 
@@ -238,21 +237,21 @@ export default async function handler(req, res) {
                     return reply(replyToken, "❌ ใช้: เช็คคน <เลขงาน>");
                 }
 
-                const snap = await db.collection("tasks")
-                    .where("taskNo", "==", taskNo)
-                    .limit(1)
-                    .get();
+                const { data: task, error: checkError } = await supabase
+                    .from('homeworks')
+                    .select('submitted, class_size')
+                    .eq('task_no', taskNo)
+                    .maybeSingle();
 
-                if (snap.empty) {
+                if (checkError) throw checkError;
+                if (!task) {
                     return reply(replyToken, "❌ ไม่พบงาน");
                 }
 
-                const task = snap.docs[0].data();
                 const submitted = task.submitted || [];
-
                 const missing = [];
 
-                for (let i = 1; i <= (task.studentsTotal || 0); i++) {
+                for (let i = 1; i <= (task.class_size || 0); i++) {
                     if (!submitted.includes(i)) {
                         missing.push(i);
                     }
