@@ -39,8 +39,10 @@ export default async function handler(req, res) {
             ];
 
             for (const r of reminders) {
-                // ตรวจสอบว่าถึงเวลาแจ้งเตือนในลูปปัจจุบันหรือยัง
-                if (now < r.time) continue;
+                // ⏱️ เงื่อนไขที่ 1: ตรวจสอบว่าถึงเวลาแจ้งเตือนในลูปปัจจุบันหรือยัง และต้องไม่เก่าเกิน 30 นาที (ป้องกันยิงย้อนหลัง)
+                if (now < r.time || now > r.time + 30 * 60 * 1000) {
+                    continue;
+                }
 
                 // สร้าง Unique Key ป้องกันการเตือนซ้ำ (อิงตาม ID หลักของงาน และคีย์เวลา)
                 const logKey = `${task.id}_${r.key}`;
@@ -54,30 +56,38 @@ export default async function handler(req, res) {
 
                 if (logError) throw logError;
 
-                // ถ้าเจอบันทึกเดิม แปลว่าเตือนไปแล้ว -> ข้ามทันที
+                // ⛔ เงื่อนไขที่ 2: ถ้าเจอบันทึกเดิม แปลว่าเตือนไปแล้ว -> ดีดตัวข้ามรอบของลูปย่อยนี้ทันที
                 if (existingLog) {
                     console.log("⛔ SKIP DUPLICATE REMINDER:", logKey);
-                    continue;
+                    continue; 
                 }
 
-                console.log("🚀 SEND REMINDER:", task.subject_name, r.type);
+                // 🚀 ย้ายบล็อกคำสั่งส่งข้อความและบันทึก Log เข้ามาอยู่ข้างในลูปย่อย 
+                // เพื่อให้สัมพันธ์กับการสั่ง continue ด้านบนอย่างถูกต้อง
+                try {
+                    console.log("🚀 SEND REMINDER:", task.subject_name, r.type);
 
-                // รูปแบบข้อความแจ้งเตือนในกลุ่มไลน์
-                const message = `📌 งาน: ${task.subject_name}\n📝 ${task.content}\n⏰ เตือน: ${r.type}`;
+                    // รูปแบบข้อความแจ้งเตือนในกลุ่มไลน์
+                    const message = `📌 งาน: ${task.subject_name}\n📝 ${task.content}\n⏰ เตือน: ${r.type}`;
 
-                // ยิงแจ้งเตือนกลับไปยังกลุ่มไลน์ต้นทางของงานชิ้นนั้นๆ
-                await sendLineMessage(task.line_group_id, message);
+                    // ยิงแจ้งเตือนกลับไปยังกลุ่มไลน์ต้นทางของงานชิ้นนั้นๆ
+                    await sendLineMessage(task.line_group_id, message);
 
-                // บันทึก Log ลงตารางป้องกันบอทยิงซ้ำรอบหน้า
-                const { error: insertLogError } = await supabase
-                    .from('reminder_logs')
-                    .insert([{
-                        log_key: logKey,
-                        task_id: task.id,
-                        reminder_type: r.type
-                    }]);
+                    // บันทึก Log ลงตารางป้องกันบอทยิงซ้ำรอบหน้า
+                    const { error: insertLogError } = await supabase
+                        .from('reminder_logs')
+                        .insert([{
+                            log_key: logKey,
+                            task_id: task.id,
+                            reminder_type: r.type
+                        }]);
 
-                if (insertLogError) throw insertLogError;
+                    if (insertLogError) throw insertLogError;
+
+                } catch (sendError) {
+                    console.error(`❌ Failed to send or log reminder for ${logKey}:`, sendError);
+                    // ปล่อยให้ลูปวนทำงานต่อกับงานอื่นได้ ไม่ให้ระบบค้าง
+                }
             }
         }
 
